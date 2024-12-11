@@ -4,13 +4,13 @@ import numpy as np
 from torch_geometric.loader import DataLoader
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, confusion_matrix, precision_score, recall_score, roc_auc_score
+import ray
 from ray import train
+from ray.air.integrations.mlflow import MLflowLoggerCallback, setup_mlflow
 import tempfile
 import mlflow.pytorch
 from model import GNN
 
-# Specify tracking server
-mlflow.set_tracking_uri("http://localhost:5000")
 
 def calculate_metrics(y_pred, y_true, epoch, phase):
     '''
@@ -45,6 +45,14 @@ def train_func(config, dataset, dataset_train, y_train):
         - y_train           : list of labels of train set 
     OUTPUT: N/A
     ''' 
+
+    tracking_uri = config.pop("tracking_uri", None)
+    setup_mlflow(
+        config,
+        # experiment_name="mlflow_hyperparameter_tuning",
+        tracking_uri=tracking_uri,
+    )
+
     # Retrieve GNN model (see model.py)
     model = GNN(
         hidden_channels=config['hidden_channels'], 
@@ -86,79 +94,79 @@ def train_func(config, dataset, dataset_train, y_train):
     # Define how many times you want to train on the train set
     num_epochs = 100
 
-    with mlflow.start_run() as run:
-        # Perform training
-        for epoch in range(num_epochs):
-            # Put model in training mode
-            model.train()
-            
-            # Iterate over each batch in train set
-            train_loss = 0
-            for data in train_loader:
-                # Pass batch through model to obtain prediction (logit)
-                out = model(data.x, data.edge_index, data.edge_attr, data.batch) 
+    # with mlflow.start_run():
+    # Perform training
+    for epoch in range(num_epochs):
+        # Put model in training mode
+        model.train()
+        
+        # Iterate over each batch in train set
+        train_loss = 0
+        for data in train_loader:
+            # Pass batch through model to obtain prediction (logit)
+            out = model(data.x, data.edge_index, data.edge_attr, data.batch) 
 
-                # Measure discrepancy between prediction (out) and label (data.y)
-                loss = criterion(out, data.y)
+            # Measure discrepancy between prediction (out) and label (data.y)
+            loss = criterion(out, data.y)
 
-                # Compute gradient of loss 
-                loss.backward()
+            # Compute gradient of loss 
+            loss.backward()
 
-                # Update the model's parameters using the computed gradients
-                optimizer.step()
+            # Update the model's parameters using the computed gradients
+            optimizer.step()
 
-                # Clear all gradients before the next iteration
-                optimizer.zero_grad()
+            # Clear all gradients before the next iteration
+            optimizer.zero_grad()
 
-                # Add to loss 
-                train_loss += loss.item()
+            # Add to loss 
+            train_loss += loss.item()
 
-            # Put model in evaluation mode
-            model.eval()
+        # Put model in evaluation mode
+        model.eval()
 
-            # Calculate accuracy of trained model on train set
-            correct_train = 0
-            y_train_pred = []
-            y_train_true = []
-            for data in train_loader:
-                out = model(data.x, data.edge_index, data.edge_attr, data.batch)
-                pred = out.argmax(dim=1)
-                correct_train += int((pred == data.y).sum())
-                y_train_pred.append(pred.cpu().numpy())
-                y_train_true.append(data.y.cpu().numpy())
+        # Calculate accuracy of trained model on train set
+        correct_train = 0
+        y_train_pred = []
+        y_train_true = []
+        for data in train_loader:
+            out = model(data.x, data.edge_index, data.edge_attr, data.batch)
+            pred = out.argmax(dim=1)
+            correct_train += int((pred == data.y).sum())
+            y_train_pred.append(pred.cpu().numpy())
+            y_train_true.append(data.y.cpu().numpy())
 
-            train_acc = correct_train / len(train_loader.dataset)
-            y_train_pred = np.concatenate(y_train_pred)
-            y_train_true = np.concatenate(y_train_true)
+        train_acc = correct_train / len(train_loader.dataset)
+        y_train_pred = np.concatenate(y_train_pred)
+        y_train_true = np.concatenate(y_train_true)
 
-            # Log training metrics
-            mlflow.log_metric("train_loss", train_loss / len(train_loader), step=epoch)
-            mlflow.log_metric("train_accuracy", train_acc, step=epoch)
+        # Log training metrics to MLflow
+        mlflow.log_metric("train_loss", train_loss / len(train_loader), step=epoch)
+        mlflow.log_metric("train_accuracy", train_acc, step=epoch)
 
-            # Calculate accuracy and loss of trained model on validation set
-            correct_val = 0
-            val_loss = 0
-            y_val_pred = []
-            y_val_true = []
-            for data in val_loader:
-                out = model(data.x, data.edge_index, data.edge_attr, data.batch)
-                loss = criterion(out, data.y)
-                pred = out.argmax(dim=1)
-                val_loss += loss.item()
-                correct_val += int((pred == data.y).sum())
-                y_val_pred.append(pred.cpu().numpy())
-                y_val_true.append(data.y.cpu().numpy())
+        # Calculate accuracy and loss of trained model on validation set
+        correct_val = 0
+        val_loss = 0
+        y_val_pred = []
+        y_val_true = []
+        for data in val_loader:
+            out = model(data.x, data.edge_index, data.edge_attr, data.batch)
+            loss = criterion(out, data.y)
+            pred = out.argmax(dim=1)
+            val_loss += loss.item()
+            correct_val += int((pred == data.y).sum())
+            y_val_pred.append(pred.cpu().numpy())
+            y_val_true.append(data.y.cpu().numpy())
 
-            val_acc = correct_val / len(val_loader.dataset)
-            y_val_pred = np.concatenate(y_val_pred)
-            y_val_true = np.concatenate(y_val_true)
+        val_acc = correct_val / len(val_loader.dataset)
+        y_val_pred = np.concatenate(y_val_pred)
+        y_val_true = np.concatenate(y_val_true)
 
-            # Log validation metrics
-            mlflow.log_metric("val_loss", val_loss / len(val_loader), step=epoch)
-            mlflow.log_metric("val_accuracy", val_acc, step=epoch)
+        # Log validation metrics to MLflow
+        mlflow.log_metric("val_loss", val_loss / len(val_loader), step=epoch)
+        mlflow.log_metric("val_accuracy", val_acc, step=epoch)
 
-            # Calculate and log confusion matrix and other metrics
-            calculate_metrics(y_val_pred, y_val_true, epoch, "val")
+        # Calculate and log confusion matrix and other metrics
+        calculate_metrics(y_val_pred, y_val_true, epoch, "val")
 
         # Save accuracies and losses together with the checkpoint
         with tempfile.TemporaryDirectory() as tempdir:
@@ -169,7 +177,7 @@ def train_func(config, dataset, dataset_train, y_train):
 
             train.report({"train_accuracy": train_acc, "val_accuracy": val_acc, "train_loss": train_loss, "val_loss": val_loss}, checkpoint=train.Checkpoint.from_directory(tempdir))
     
-    # Save the trained model to MLflow.
+    # Save the trained model to MLflow
     mlflow.pytorch.log_model(model, "model")
 
 def test_best_model(best_result, dataset, dataset_test):

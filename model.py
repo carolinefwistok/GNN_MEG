@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from torch_geometric.nn import global_mean_pool
 from torch_geometric.nn import GCNConv
 
+
 class GNN(torch.nn.Module):
     '''
     Defines the graph neural network (GNN) model that is trained and tested by train.py

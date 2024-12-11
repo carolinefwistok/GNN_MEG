@@ -1,5 +1,5 @@
 ## TM3 Graduation Project - Caroline Witstok
-Graph Neural Network model for classifying stimulation status (ON/OFF) in patients with Spinal Cord Stimulation
+Graph Neural Network model for classifying stimulation status (ON/OFF) in patients with Spinal Cord Stimulation.
 
 
 ### Installing requirements
@@ -11,6 +11,15 @@ python -m pip install -r requirements.txt
 
 Note: make sure that your virtual environment is located in the same directory as the project (and the requirements file).
 
+### Directories
+The project is structured as follows on the hard drive `F:MEG_connect`:
+- `MEG GNN`: this folder stores all files related to this graduation project.
+  - `brainstorm_db`: this folder containst the Brainstorm process for preprocessing purposes.
+  - `GNN`: this folder contains all GNN model related files.
+    - The contents of this folder will be elaborated in the next section.
+  - `MEG data`: this folder contains all raw MEG recordings of the patients with cyclic SCS.
+    - This folder also contains `MEG_PT_notes.xlsx`, which lists the stimulation settings and OFF times for each file.
+  - `MLflow`: this folder is created for the MLflow logging.
 
 ### Folders
 - `data`: contains the dataset used for training and testing the model
@@ -19,7 +28,7 @@ Note: make sure that your virtual environment is located in the same directory a
   - `raw`: contains the MEG data (in fif-file format) used for creating the graphs
     - `export from Brainstorm`: contains the Python script used to export the data from Brainstorm (FT data)
     - `fif files - ...`: folders containing MEG data in (fif-file format) that are currently NOT used when running the model, but act as storage
-
+- `output`: in here, the excel files containing the model results will be stored, the subfolders specify the epoch settings. The `Training log.xlsx` file contains a structured overview and notes of these excel files.
 - `ray_results`: contains the results of the Ray Tune hyperparameter tuning process
 - `ray_temp`: contains temporary files created during the Ray Tune process
 

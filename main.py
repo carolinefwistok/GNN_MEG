@@ -1,13 +1,16 @@
 import numpy as np
 import os
 from sklearn.model_selection import train_test_split
+import mlflow
 import ray
 from ray import train, tune
+from ray.air.integrations.mlflow import MLflowLoggerCallback, setup_mlflow
 from dataset import MEGGraphs
 from data_utils import get_stimulation_info
 from train import train_func, test_best_model
 from visualize_graphs import plot_PSD, visualize_graph
 from utils import plot_train_results, save_results
+import datetime
 
 
 def create_dataset():
@@ -113,7 +116,7 @@ def split_train_test(dataset):
 
     return dataset_train, dataset_test, y_train, y_test
 
-def train_hyperparameters(dataset, dataset_train, y_train):
+def train_hyperparameters(mlflow_tracking_uri, dataset, dataset_train, y_train):
     '''
     Trains the GNN model (see model.py) using the Ray trainable train_func (see train.py). The search space used for the hyperparameter tuning is defined here.
     INPUTS: 
@@ -132,6 +135,11 @@ def train_hyperparameters(dataset, dataset_train, y_train):
         ray.shutdown()
     ray.init(_temp_dir=r"F:\MEG GNN\GNN\Ray_temp")
 
+    # Initialize MLflow logging
+    experiment_name = f"mlflow_hyperparameter_tuning_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    mlflow.set_tracking_uri(mlflow_tracking_uri)
+    mlflow.set_experiment(experiment_name)
+
     # Make sure Ray doesn't change the working directory to the trial directory, so you can define your own (relative) path to store results 
     os.environ["RAY_CHDIR_TO_TRIAL_DIR"] = "0"
 
@@ -148,7 +156,14 @@ def train_hyperparameters(dataset, dataset_train, y_train):
     # Define path where results need to be stored
     run_config = train.RunConfig(
         name = 'tune_hyperparameters',
-        storage_path=r"F:\MEG GNN\GNN\Ray_results"
+        storage_path=r"F:\MEG GNN\GNN\Ray_results",
+        callbacks=[
+            MLflowLoggerCallback(
+                tracking_uri=mlflow_tracking_uri,
+                experiment_name=experiment_name,
+                save_artifact=True,
+            )
+        ],
     )               
 
     # Define which metric you want Ray to base 'best_results' on, whether that metric needs to be 'max' or 'min', and how many configurations you want it to try
@@ -194,7 +209,10 @@ def main():
     dataset_train, dataset_test, y_train, y_test = split_train_test(dataset)
     print('training set', len(dataset_train))
     print('test set', len(dataset_test))
-    results, best_result, best_params = train_hyperparameters(dataset, dataset_train, y_train)
+    
+    # Specify tracking server
+    mlflow_tracking_uri = "http://localhost:5000"
+    results, best_result, best_params = train_hyperparameters(mlflow_tracking_uri, dataset, dataset_train, y_train)
 
     # If plotting = True, plot the results of the model
     if plotting:

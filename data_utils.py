@@ -19,6 +19,8 @@ def get_stimulation_info(excel_file, filename):
     
     # Convert specified columns to float
     df[float_columns] = df[float_columns].astype(float)
+
+    # Account for excel file formatting (not seeing a dot as decimal points)
     df['First_OFF_time'] /= 1000
     df['Second_OFF_time'] /= 1000
     df['Last_OFF_time'] /= 1000
