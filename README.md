@@ -5,11 +5,26 @@ Graph Neural Network model for classifying stimulation status (ON/OFF) in patien
 ### Installing requirements
 You will need to install all requirements listed in `requirements.txt`
 If you are using a virtual environment, you can install the requirements using the following command:
-``` 
+```
+python -m pip install -r requirements.txt
+```
+
+First, you have to activate (and create) the virtual environment. Navigate to your preferred directory and use these commands:
+```
+cd ../..
+cd F:
+./'MEG GNN'/'GNN'/
+python -m venv .venv
+```
+
+Then activate your virtual environment and install all required packages.
+```
+./.venv/Scripts/activate
 python -m pip install -r requirements.txt
 ```
 
 Note: make sure that your virtual environment is located in the same directory as the project (and the requirements file).
+
 
 ### Directories
 The project is structured as follows on the hard drive `F:MEG_connect`:
