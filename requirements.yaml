@@ -1,0 +1,4 @@
+name: GNNenv
+channels:
+  - defaults
+prefix: C:\Users\carow\miniconda3\envs\GNNenv

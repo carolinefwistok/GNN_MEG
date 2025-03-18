@@ -2,13 +2,55 @@ import os
 import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import datetime
-    
+import torch
+
+
+def edge_filtering(graph, top_k, threshold):
+    '''
+    Applies edge filtering to a single graph before inputting to the GNN model.
+
+    INPUTS:
+        - graph     : Graph object
+        - top_k     : Integer defining the number of edges to keep
+        - threshold : Float defining the threshold for edge weights
+
+    OUTPUT:
+        - graph     : Graph object with filtered edges
+    '''
+    # Retrieve edge indices and edge weights from the graph
+    edge_index, edge_weight = graph.edge_index, graph.edge_attr
+
+    # Apply threshold filtering if specified
+    if threshold is not None:
+        mask = edge_weight > threshold
+        edge_index = edge_index[:, mask]
+        edge_weight = edge_weight[mask]
+        print('Num edges after threshold filtring:', edge_index.shape[1])
+
+    # Apply top-K filtering if specified
+    if top_k is not None:
+        # Get the indices of the top K edges
+        if edge_weight.numel() > top_k:
+            top_k_indices = torch.topk(edge_weight, top_k).indices
+            edge_index = edge_index[:, top_k_indices]
+            edge_weight = edge_weight[top_k_indices]
+            print('Num edges after top-K filtering:', edge_index.shape[1])
+
+    # Update graph with filtered edges
+    graph.edge_index = edge_index
+    graph.edge_attr = edge_weight
+    print('Num edges after edge filtering (total):', graph.edge_index.shape[1])
+
+    return graph
+
 def plot_train_results(results, best_result):
     '''
-    Plots the training results by plotting the losses and accuracies of both the train and validation set. 
+    Plots the training results by plotting the losses and accuracies of both the train and validation set.
+
     INPUT: N/A
     OUTPUT: N/A
     '''
+
     # Plot accuracies for different hyperparameters
     ax = None
     for result in results:
@@ -64,6 +106,7 @@ def save_results(results_df, best_params, best_result, output_directory, duratio
     
     OUTPUT: N/A
     '''
+
     # Create a subfolder name based on duration, overlap, and number of graphs
     subfolder_name = f'graphs_{num_graphs}_duration_{duration}_overlap_{overlap}'
     subfolder_path = os.path.join(output_directory, subfolder_name)
@@ -77,13 +120,18 @@ def save_results(results_df, best_params, best_result, output_directory, duratio
 
     # Create results DataFrame with specified columns
     columns_to_export = [
-        'config/hidden_channels',
+        'config/n_layers',
+        'config/dropout_rate', 
+        'config/conv1_hidden_channels',
         'config/lr',
         'config/batch_size',
+        'config/weight_decay',
+        'config/top_k',
+        'config/threshold',
         'train_accuracy',
         'val_accuracy',
         'train_loss',
-        'val_loss'
+        'val_loss',
     ]
     results_df_export = results_df[columns_to_export]
 
@@ -94,7 +142,7 @@ def save_results(results_df, best_params, best_result, output_directory, duratio
     training_iter = best_result.metrics_dataframe['training_iteration']
     train_loss = best_result.metrics_dataframe['train_loss']
     val_loss = best_result.metrics_dataframe['val_loss']
-    iteration_loss_df = pd.DataFrame({'training_iteration': training_iter,
+    iteration_loss_df = pd.DataFrame({'iter': training_iter,
                                       'train_loss': train_loss,
                                       'val_loss': val_loss})
 
@@ -106,4 +154,30 @@ def save_results(results_df, best_params, best_result, output_directory, duratio
         best_params_df.to_excel(writer, sheet_name='Best Parameters', index=False)
         # Write the training iteration, train loss, and val loss to another sheet
         iteration_loss_df.to_excel(writer, sheet_name='Training and validation loss', index=False)
+    
     print(f'Results saved to {output_file}')
+
+def save_metrics_to_txt(metrics, filenames, output_directory, filename):
+    '''
+    Saves the metrics to a CSV file.
+
+    INPUT:
+        - metrics          : Dictionary of metrics to save
+        - filenames        : List of filenames
+        - output_directory : Directory to save the text file
+        - filename         : Name of the text file
+    
+    OUTPUT: N/A
+    '''
+    os.makedirs(output_directory, exist_ok=True)
+    file_path = os.path.join(output_directory, filename)
+
+    with open(file_path, mode='w') as file:
+        file.write("\nFilenames:\n")
+        for fname in filenames:
+            file.write(f"{fname}\n")
+        file.write("\nMetrics:\n")
+        for key, value in metrics.items():
+            file.write(f"{key}: {value}\n")
+
+    print(f"Metrics saved to {file_path}")
