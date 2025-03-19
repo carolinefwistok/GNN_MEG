@@ -1086,12 +1086,12 @@ class MEGGraphs(Dataset):
         matching_files = glob.glob(pattern)
         print('Matching files:', matching_files)
 
-        # Check if any matching files are found
-        if matching_files:
-            edge_filename = matching_files[0]
-            print(f"Loading edges from {edge_filename}")
-            edges = torch.load(edge_filename)
-            return edges['edge_index'], edges['edge_weight']
+        # Check if any matching files are found -- Uncomment to load previously saved edges
+        # if matching_files:
+        #     edge_filename = matching_files[0]
+        #     print(f"Loading edges from {edge_filename}")
+        #     edges = torch.load(edge_filename)
+        #     return edges['edge_index'], edges['edge_weight']
 
         # Perform connectivity calculation
         conn = mne_connectivity.spectral_connectivity_time(
@@ -1122,14 +1122,14 @@ class MEGGraphs(Dataset):
         print("Max weight:", edge_weight.max())
         print("Min weight:", edge_weight.min())
 
-        # Save the edges to disk
-        os.makedirs(save_dir, exist_ok=True)
-        if self.input_type == 'scout':
-            save_edge_filename = os.path.join(save_dir, f"edges_{idx_file}_{idx_epoch}_{method}_scout.pt")
-        elif self.input_type == 'fif':
-            save_edge_filename = os.path.join(save_dir, f"edges_{idx_file}_{idx_epoch}_{method}.pt")
-        torch.save({'edge_index': edge_index, 'edge_weight': edge_weight}, save_edge_filename)
-        print(f"Edges saved to {save_edge_filename}")
+        # Save the edges to disk -- Uncomment to save the edges
+        # os.makedirs(save_dir, exist_ok=True)
+        # if self.input_type == 'scout':
+        #     save_edge_filename = os.path.join(save_dir, f"edges_{idx_file}_{idx_epoch}_{method}_scout.pt")
+        # elif self.input_type == 'fif':
+        #     save_edge_filename = os.path.join(save_dir, f"edges_{idx_file}_{idx_epoch}_{method}.pt")
+        # torch.save({'edge_index': edge_index, 'edge_weight': edge_weight}, save_edge_filename)
+        # print(f"Edges saved to {save_edge_filename}")
 
         return edge_index, edge_weight
     

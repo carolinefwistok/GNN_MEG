@@ -146,12 +146,6 @@ def train_func(config, dataset, dataset_train, y_train, model_name):
             checkpoint_dict = torch.load(os.path.join(checkpoint_dir, "checkpoint.pt"))
             model.load_state_dict(checkpoint_dict["model_state"])
 
-    # Initialize the gradient scaler for mixed precision training
-    # scaler = GradScaler()
-
-    # Define number of accumulation steps
-    # accumulation_steps = 4
-
     # Perform training
     for epoch in range(num_epochs):
         # Put model in training mode
@@ -177,38 +171,6 @@ def train_func(config, dataset, dataset_train, y_train, model_name):
 
             # Add to loss 
             train_loss += loss.item()
-
-
-        # # Initialize variable to track loss and reset gradients
-        # train_loss = 0
-        # optimizer.zero_grad()
-
-        # for i, data in enumerate(train_loader):
-        #     optimizer.zero_grad()
-
-        #     # Use autocast for mixed precision training
-        #     with autocast(device_type='cuda', dtype=torch.float16):
-        #         # Pass batch through model to obtain prediction (logit)
-        #         out = model(data.x, data.edge_index, data.edge_attr, data.batch)
-        #         # Measure discrepancy between prediction (out) and label (data.y)
-        #         loss = criterion(out, data.y)
-
-        #     # Scale the loss and perform backward pass
-        #     scaler.scale(loss).backward()
-
-        #     if (i + 1) % accumulation_steps == 0:
-        #         # Update the model's parameters using the computed gradients
-        #         scaler.step(optimizer)
-        #         # Update the scale for next iteration
-        #         scaler.update()
-        #         # Clear all gradients before the next iteration
-        #         optimizer.zero_grad()
-
-            # # Add to loss 
-            # train_loss += loss.item()
-
-        # Step the scheduler
-        # scheduler.step()
 
         # Put model in evaluation mode
         model.eval()
