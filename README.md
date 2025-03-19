@@ -1,6 +1,7 @@
 ## TM3 Graduation Project - Caroline Witstok
 Graph Neural Network model for classifying stimulation status (ON/OFF) in patients with Spinal Cord Stimulation.
 
+------------
 
 ### Installing requirements
 You will need to install all requirements listed in `requirements.yaml`.
@@ -30,8 +31,12 @@ conda env export > <path-to-project>\requirements.yaml
 When opening the project files in VSCode (or any other preferred code editor), make sure to select the virtual environment when running the code.
 In VSCode, you can do this by pressing "ctrl"+"shift"+"P" and click on "Python: Select Interpreter" to select the `GNNenv` environment.
 
+------------
+
 ### Directories
 The project is structured as follows on the hard drive `F:MEG_connect` and on a local directory `C:\Users\carow\Documents\GNN`.
+
+------------
 
 The hard drive directory holds the raw data and the processed data.
 - `MEG GNN`: this folder stores all files related to this graduation project.
@@ -44,6 +49,7 @@ The hard drive directory holds the raw data and the processed data.
 ### Folders within 'GNN' project folder
 - `data`: contains the dataset used for training and testing the model.
   - `processed`: contains the graphs that are created from the data in the folder `data\raw` .
+    - `bad_subepochs`: contains the graphs based on subepochs that were removed from the dataset due to artifacts, including the graph file, text file with the subepoch indices, and a saved plot of the time series of the bad subepoch.
   - `processed_saved`: contains folders that store previously created graphs, which can be copy pasted to the `processed` folder to save time.
   - `raw`: contains the MEG data (in fif-file format) used for creating the graphs.
     - `export from Brainstorm`: contains the Python script used to export the data from Brainstorm (FT data).
@@ -55,6 +61,8 @@ The hard drive directory holds the raw data and the processed data.
 - `output`: in here, the excel files containing the model results will be stored, the subfolders specify the epoch settings. The `Training log.xlsx` file contains a structured overview and notes of these excel files.
 - `ray_results`: contains the results of the Ray Tune hyperparameter tuning process.
 - `ray_temp`: contains temporary files created during the Ray Tune process.
+
+------------
 
 The local directory holds all Python scripts, and is used to run the model.
 
@@ -69,6 +77,7 @@ The local directory holds all Python scripts, and is used to run the model.
 - `export_scouts.py`: exports a source estimated scout file from Brainstorm (.mat format) to a h5py (Python) file.
 - `export_ftp_python.py`: Python script used to export the data from Brainstorm (FT data) into fif-files (compatible with MNE Python).
 
+------------
 
 ### Running the model
 * For running the model, the script `main.py` should be used on the local directory of your computer.
