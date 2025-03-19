@@ -346,13 +346,24 @@ class MEGGraphs(Dataset):
                 self.graphs.extend(corrected_graphs)
                 print(f'Graphs for file: {len(graphs_file)}')
 
-                # Track the actual number of graphs created per file
+                # # Track the actual number of graphs created per file
+                # self.actual_epochs_per_file.append(len(valid_graphs_file))
+                # self.actual_stim_on_per_file.append(sum(1 for graph in valid_graphs_file if graph.y is not None and graph.y.item() == 1))
+                # self.actual_stim_off_per_file.append(sum(1 for graph in valid_graphs_file if graph.y is not None and graph.y.item() == 0))
+
+                # Count stimulation ON graphs created per file
+                stim_on_count = sum(1 for graph in valid_graphs_file if graph.y is not None and graph.y.item() == 1)
+                self.actual_stim_on_per_file.append(stim_on_count)
+                
+                # Count stimulation OFF graphs created per file
+                stim_off_count = sum(1 for graph in valid_graphs_file if graph.y is not None and graph.y.item() == 0)
+                self.actual_stim_off_per_file.append(stim_off_count)
+
+                # Count the total number of graphs created per file
                 self.actual_epochs_per_file.append(len(valid_graphs_file))
-                self.actual_stim_on_per_file.append(sum(1 for graph in valid_graphs_file if graph.y is not None and graph.y.item() == 1))
-                self.actual_stim_off_per_file.append(sum(1 for graph in valid_graphs_file if graph.y is not None and graph.y.item() == 0))
 
                 # Release memory for large data structures that are no longer needed
-                del graphs_file, mean_PSD_off, corrected_graphs
+                del graphs_file, mean_PSD_off, corrected_graphs, stim_on_count, stim_off_count, valid_graphs_file
                 gc.collect()
 
         print('Lenght self.graphs', len(self.graphs))
@@ -903,6 +914,13 @@ class MEGGraphs(Dataset):
                 # Counter for subepochs within the current epoch
                 subepochs_count = 0
 
+                # Load data from epoch
+                epoch_data = epochs[idx].get_data() * 10**15
+
+                # Calculate the median and MAD for the entire epoch
+                epoch_median = np.median(epoch_data)
+                epoch_mad = np.median(np.abs(epoch_data - epoch_median))
+
                 # Iterate over all tmin and tmax
                 for i, (tmin, tmax) in enumerate(zip(all_tmin, all_tmax)):
                     # Load data from epoch
@@ -911,20 +929,16 @@ class MEGGraphs(Dataset):
                     # Crop epoch with tmin and tmax
                     subepoch = epoch.crop(tmin=tmin, tmax=tmax)
 
-                    # Detect bad epochs based on median and maximum deviation
-                    median = np.median(subepoch.get_data() * 10**15)
-                    mad = np.median(np.abs(subepoch.get_data() * 10**15 - median))
-                    max_deviation = np.max(np.abs(subepoch.get_data() * 10**15 - median))
-
-                    # Compute deviation score and check if this exceeds the threshold
-                    deviation_score = (max_deviation - median) / mad
+                    # Detect bad epochs based on epoch median, MAD and maximum deviation of subepoch
+                    subepoch_median = np.median(subepoch.get_data() * 10**15)
+                    max_deviation = np.max(np.abs(subepoch.get_data() * 10**15 - epoch_median))
+                    deviation_score = max_deviation / epoch_mad if epoch_mad != 0 else np.inf
+                    # deviation_score = (max_deviation - epoch_median) / epoch_mad
+                    
+                    # If the deviation score exceeds the threshold, mark the epoch as bad
                     if deviation_score > threshold:
-                        # If the deviation score exceeds the threshold, mark the epoch as bad.
-                        # Note that this subepoch will be included in further graph creation steps, 
-                        # but will be marked as bad before saving
+                        # Note that this subepoch will be included in further graph creation steps
                         bad_subepochs_list.append((total_subepochs, subepoch))
-                        # continue  # Uncomment this line to remove this bad subepoch, and deviating 
-                        # from the amount of subepochs that were initially defined
 
                     # Create unique event sample
                     subepoch.events[:, 0] = subepoch.events[:, 0] + unique_event_samples[i]
@@ -1324,13 +1338,15 @@ class MEGGraphs(Dataset):
 
         # For each file, retrieve the bad subepoch text file including the indices of the bad subepochs 
         for idx_files in range(len(self.filenames)):
-            bad_subepochs_file = os.path.join(self.processed_dir, f'bad_subepochs_{idx_files}.txt')
+            bad_subepochs_file = os.path.join(self.processed_dir, 'bad_subepochs', f'bad_subepochs_{idx_files}.txt')
 
             # Retrieve the indices of the bad subepochs for this file
             if os.path.exists(bad_subepochs_file):
                 with open(bad_subepochs_file, 'r') as f:
                     bad_indices = [int(line.strip()) for line in f]
                     bad_indices_per_file[idx_files] = bad_indices
+            else:
+                print(f'The file "bad_subepochs_{idx_files}.txt" does not exist in this directory: {bad_subepochs_dir}!')
 
         # Move bad graphs for this file to the bad subepochs directory
         for idx_files in range(len(self.filenames)):

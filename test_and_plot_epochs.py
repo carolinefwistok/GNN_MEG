@@ -95,7 +95,6 @@ def split_epochs(epochs, duration, overlap, ramp_time, sfreq, label, threshold):
         - bad_subepochs_list: list of bad subepochs of length 'duration'
     '''
 
-
     # Define epoch length
     length_epoch = 60 - 2 * ramp_time
 
@@ -114,12 +113,12 @@ def split_epochs(epochs, duration, overlap, ramp_time, sfreq, label, threshold):
             start = 0  # This is the earliest start time
 
             # Last subepoch needs to start at 'duration' before the ramp time at the end of the epoch
-            stop = int(60 - 2*ramp_time - duration)  # This is the latest start time
+            stop = int(60 - duration)  # This is the latest start time
 
             # Ensure that the last tmin does not exceed the minimum required value
-            # max_last_tmin = -ramp_time - duration
-            # if stop < max_last_tmin:
-            #     stop = max_last_tmin
+            max_last_tmin = 60 - 2* ramp_time - duration
+            if stop > max_last_tmin:
+                stop = max_last_tmin
             
             # Calculate how many subepochs you will get out of the 60 seconds based on 'duration' and 'overlap' 
             num = int((length_epoch - duration) / (duration - overlap) + 1)
@@ -161,6 +160,14 @@ def split_epochs(epochs, duration, overlap, ramp_time, sfreq, label, threshold):
         # Iterate over all epochs
         for idx, _ in enumerate(range(len(epochs))):
             subepoch_count = 0 
+
+            # Load data from epoch
+            epoch = epochs[idx].get_data() * 10**15  # Scale if necessary
+
+            # Calculate the median and MAD for the entire epoch
+            epoch_median = np.median(epoch)
+            epoch_mad = np.median(np.abs(epoch - epoch_median))
+
             # Iterate over all tmin and tmax
             for i, (tmin, tmax) in enumerate(zip(all_tmin, all_tmax)):
                 # Load data from epoch
@@ -174,19 +181,21 @@ def split_epochs(epochs, duration, overlap, ramp_time, sfreq, label, threshold):
                 stop_sample = int(tmax * 2400)
                 subepoch_data = epoch[:, :, start_sample:stop_sample]
 
-                # Average the subepoch data across all channels
-                avg_subepoch_data = np.mean(subepoch_data, axis=1).squeeze()
+                # Calculate the median of the subepoch
+                subepoch_median = np.median(subepoch_data)
 
-                # Check for bad segments using median absolute deviation and z-score
-                median = np.median(subepoch_data)
-                mad = np.median(np.abs(subepoch_data - median))
-                max_deviation = np.max(np.abs(subepoch_data - median))
-                dev_score = (max_deviation) / mad
-                print(f'median={median}, mad={mad}, max_deviation={max_deviation}, deviation score={dev_score}, threshold={threshold}')
+                # Calculate the maximum deviation from the epoch median
+                max_deviation = np.max(np.abs(subepoch_data - epoch_median))
+
+                # Calculate deviation score based on maximum deviation and MAD
+                dev_score = max_deviation / epoch_mad if epoch_mad != 0 else np.inf  # Avoid division by zero
+ 
+                print(f'epoch_median={epoch_median}, subepoch_median={subepoch_median}, max_deviation={max_deviation}, deviation score={dev_score}, threshold={threshold}')
+                
                 if dev_score > threshold:
                     print(f'Removing bad subepoch: tmin={tmin}, tmax={tmax}')
-                    bad_subepochs_list.append((total_subepochs, subepoch_count, subepoch_data))
-                    continue  # Uncomment this line if you want to remove the bad subepochs
+                    bad_subepochs_list.append((total_subepochs, subepoch_count, mne.EpochsArray(subepoch_data, epochs.info, events=subepoch_events)))
+                    # continue  # Uncomment this line if you want to remove the bad subepochs
 
                 # Create unique event sample
                 subepoch_events = epochs[idx].events.copy()
@@ -237,7 +246,6 @@ def plot_epochs(subepochs_stim, subepochs_non_stim, bad_subepochs_stim, bad_sube
         - subepochs_non_stim: List of Epochs objects for stimulation OFF to be plotted
         - bad_subepochs_stim: List of bad subepochs for stimulation ON
         - bad_subepochs_non_stim: List of bad subepochs for stimulation OFF
-
         - title: Title of the plot
     OUTPUT: N/A
     '''
@@ -266,9 +274,12 @@ def plot_epochs(subepochs_stim, subepochs_non_stim, bad_subepochs_stim, bad_sube
                                                info, 
                                                events=combined_events_non_stim)
 
-    # Plot the combined epochs
-    # combined_epochs_stim.plot(n_epochs=10, title=title + ' (Stimulation ON)')
-    # combined_epochs_non_stim.plot(n_epochs=10, title=title + ' (Stimulation OFF)')
+    # Calculate the median and MAD for the entire combined epochs
+    epoch_median_stim = np.median(combined_data_stim)
+    epoch_mad_stim = np.median(np.abs(combined_data_stim - epoch_median_stim))
+
+    epoch_median_non_stim = np.median(combined_data_non_stim)
+    epoch_mad_non_stim = np.median(np.abs(combined_data_non_stim - epoch_median_non_stim))
 
     # Plot the epochs in subplots
     num_epochs = max(len(subepochs_stim), len(subepochs_non_stim))
@@ -285,23 +296,15 @@ def plot_epochs(subepochs_stim, subepochs_non_stim, bad_subepochs_stim, bad_sube
             times = subepochs_stim[i].times
             ax.plot(times, avg_epoch_data_stim.T, color='blue', label='Stimulation ON')
 
-            # Calculate and plot median, MAD, and max deviation
-            median = np.median(avg_epoch_data_stim)
-            mad = np.median(np.abs(avg_epoch_data_stim - median))
-            max_deviation = np.max(np.abs(avg_epoch_data_stim - median))
-            dev_score = (max_deviation) / mad
-            ax.axhline(median, color='green', linestyle='--', label='Median (ON)')
-            ax.axhline(median + mad, color='orange', linestyle='--', label='MAD (ON)')
-            ax.axhline(median - mad, color='orange', linestyle='--')
-            ax.axhline(median + max_deviation, color='red', linestyle='--', label='Max Deviation (ON)')
-            ax.axhline(median - max_deviation, color='red', linestyle='--')
-            ax.axhline(dev_score, color='black', linestyle='--', label='Deviation Score (ON)')
+            # Plot median and MAD for the entire epoch
+            ax.axhline(epoch_median_stim, color='green', linestyle='--', label='Median (ON)')
+            ax.axhline(epoch_median_stim + epoch_mad_stim, color='orange', linestyle='--', label='MAD (ON)')
+            ax.axhline(epoch_median_stim - epoch_mad_stim, color='orange', linestyle='--')
 
             # Highlight bad subepochs within the current subepoch
-            for bad_epoch in bad_subepochs_stim:
-                total_idx, subepoch_idx, _ = bad_epoch
+            for total_idx, subepoch_idx, bad_epoch in bad_subepochs_stim:
                 if total_idx == i:
-                    ax.axvspan(times[0], times[-1], color='blue', alpha=0.2, label='Bad Subepoch (ON)')
+                    ax.axvspan(bad_epoch.times[0], bad_epoch.times[-1], color='blue', alpha=0.2, label='Bad Subepoch (ON)')
 
         if i < len(subepochs_non_stim):
             epoch_data_non_stim = subepochs_non_stim[i].get_data()
@@ -309,24 +312,15 @@ def plot_epochs(subepochs_stim, subepochs_non_stim, bad_subepochs_stim, bad_sube
             times = subepochs_non_stim[i].times
             ax.plot(times, avg_epoch_data_non_stim.T, color='red', label='Stimulation OFF')
             
-            # Calculate and plot median, MAD, and max deviation
-            median = np.median(avg_epoch_data_non_stim)
-            mad = np.median(np.abs(avg_epoch_data_non_stim - median))
-            max_deviation = np.max(np.abs(avg_epoch_data_non_stim - median))
-            dev_score = (max_deviation) / mad
-            ax.axhline(median, color='cyan', linestyle='--', label='Median (OFF)')
-            ax.axhline(median + mad, color='yellow', linestyle='--', label='MAD (OFF)')
-            ax.axhline(median - mad, color='yellow', linestyle='--')
-            ax.axhline(median + max_deviation, color='magenta', linestyle='--', label='Max Deviation (OFF)')
-            ax.axhline(median - max_deviation, color='magenta', linestyle='--')
-            ax.axhline(dev_score, color='grey', linestyle='--', label='Deviation Score (OFF)')
+            # Plot median and MAD for the entire epoch
+            ax.axhline(epoch_median_non_stim, color='cyan', linestyle='--', label='Median (OFF)')
+            ax.axhline(epoch_median_non_stim + epoch_mad_non_stim, color='yellow', linestyle='--', label='MAD (OFF)')
+            ax.axhline(epoch_median_non_stim - epoch_mad_non_stim, color='yellow', linestyle='--')
 
             # Highlight bad subepochs within the current subepoch
-            for bad_epoch in bad_subepochs_non_stim:
-                total_idx, subepoch_idx, _ = bad_epoch
+            for total_idx, subepoch_idx, bad_epoch in bad_subepochs_non_stim:
                 if total_idx == i:
-                    ax.axvspan(times[0], times[-1], color='red', alpha=0.2, label='Bad Subepoch (OFF)')
-
+                    ax.axvspan(bad_epoch.times[0], bad_epoch.times[-1], color='red', alpha=0.2, label='Bad Subepoch (OFF)')
 
         ax.set_title(f'Epoch {i+1}')
         ax.set_xlabel('Time (s)')
@@ -337,33 +331,46 @@ def plot_epochs(subepochs_stim, subepochs_non_stim, bad_subepochs_stim, bad_sube
     plt.tight_layout()
     plt.show()
 
-def plot_single_epoch_time_series(epoch, title):
+def plot_single_epoch_time_series(subepochs, subepoch_index, title):
     '''
-    Plots the time series for a single epoch, including the median, MAD, and max deviation.
+    Plots the time series for a single subepoch, including the median, MAD, and max deviation
+    calculated from the entire epoch.
 
     INPUT:
-        - epoch: The epoch to be plotted
+        - subepochs: List of subepoch Epochs objects
+        - subepoch_index: Index of the subepoch to be plotted
         - title: Title of the plot
     OUTPUT: N/A
     '''
-    epoch_data = epoch.get_data()
-    avg_epoch_data = np.mean(epoch_data, axis=1).squeeze()  # Average over all channels
-    times = epoch.times
 
-    # Calculate median, MAD, and max deviation for the subepoch
-    median = np.median(avg_epoch_data)
-    mad = np.median(np.abs(avg_epoch_data - median))
-    max_deviation = np.max(np.abs(avg_epoch_data - median))
-    dev_score = (max_deviation - median) / mad
+    # Check if the subepoch_index is valid
+    if subepoch_index < 0 or subepoch_index >= len(subepochs):
+        raise ValueError("Invalid subepoch index.")
+
+    # Get the selected subepoch
+    subepoch = subepochs[subepoch_index]
+    subepoch_data = subepoch.get_data()
+    avg_subepoch_data = np.mean(subepoch_data, axis=1).squeeze()  # Average over all channels
+    times = subepoch.times
+
+    # Get data for the entire epoch (assuming all subepochs belong to the same epoch)
+    entire_epoch_data = np.concatenate([epoch.get_data() for epoch in subepochs], axis=0)
+    avg_entire_epoch_data = np.mean(entire_epoch_data, axis=1).squeeze()  # Average over all channels
+
+    # Calculate median, MAD, and max deviation for the entire epoch
+    epoch_median = np.median(avg_entire_epoch_data)
+    epoch_mad = np.median(np.abs(avg_entire_epoch_data - epoch_median))
+    max_deviation = np.max(np.abs(avg_subepoch_data - epoch_median))
+    dev_score = (max_deviation - epoch_median) / epoch_mad if epoch_mad != 0 else np.inf  # Avoid division by zero
 
     plt.figure(figsize=(10, 5))
-    plt.plot(times, avg_epoch_data.T, color='blue', label='Time Series')
-    plt.axhline(median, color='green', linestyle='--', label='Median')
-    plt.axhline(median + mad, color='orange', linestyle='--', label='MAD')
-    plt.axhline(median - mad, color='orange', linestyle='--')
-    plt.axhline(median + max_deviation, color='red', linestyle='--', label='Max Deviation')
-    plt.axhline(median - max_deviation, color='red', linestyle='--')
-    plt.axhline(dev_score, color='purple', linestyle='--', label='Deviation Score')
+    plt.plot(times, avg_subepoch_data.T, color='blue', label='Subepoch Time Series')
+    plt.axhline(epoch_median, color='green', linestyle='--', label='Median (Entire Epoch)')
+    plt.axhline(epoch_median + epoch_mad, color='orange', linestyle='--', label='MAD (Entire Epoch)')
+    plt.axhline(epoch_median - epoch_mad, color='orange', linestyle='--')
+    plt.axhline(epoch_median + max_deviation, color='red', linestyle='--', label='Max Deviation (Subepoch)')
+    plt.axhline(epoch_median - max_deviation, color='red', linestyle='--')
+    plt.axhline(dev_score, color='purple', linestyle='--', label=f'Deviation Score = {dev_score}')
 
     plt.title(title)
     plt.xlabel('Time (s)')
@@ -466,11 +473,8 @@ def plot_avg_psd(psd_stim_list, psd_non_stim_list, fmax, title, channel_names):
     OUTPUT: N/A
     '''
 
-    print('shape psd stim list', len(psd_stim_list))
     # Compute the average and standard deviation of the PSD values over all epochs
     avg_psd_stim = np.mean(psd_stim_list, axis=0)
-    print('avg psd stim', avg_psd_stim)
-    print('shape avg psd stim', avg_psd_stim.shape)
     std_psd_stim = np.std(psd_stim_list, axis=0)
 
     # Compute the average and standard deviation of the PSD values over all epochs
@@ -598,8 +602,8 @@ def main():
     stim_excel_file = r'F:\MEG GNN\MEG data\MEG_PT_notes.xlsx'
 
     # Define parameters
-    duration = 15
-    overlap = 10
+    duration = 12
+    overlap = 4
     ramp_time = 5
     fmin = 1
     fmax = 100
@@ -691,20 +695,25 @@ def main():
         # Resample epochs using specified sampling frequency
         subepochs_stim_resampled = [epoch.resample(sfreq=sfreq) for epoch in subepochs_stim]
         subepochs_non_stim_resampled = [epoch.resample(sfreq=sfreq) for epoch in subepochs_non_stim]
-        bad_subepochs_stim_resampled = [epoch.resample(sfreq=sfreq) for epoch in bad_subepochs_stim]
-        bad_subepochs_non_stim_resampled = [epoch.resample(sfreq=sfreq) for epoch in bad_subepochs_non_stim]
+        bad_subepochs_stim_resampled = [(total_idx, subepoch_idx, epoch.resample(sfreq=sfreq)) for total_idx, subepoch_idx, epoch in bad_subepochs_stim]
+        bad_subepochs_non_stim_resampled = [(total_idx, subepoch_idx, epoch.resample(sfreq=sfreq)) for total_idx, subepoch_idx, epoch in bad_subepochs_non_stim]
 
         print('Number of stimulation ON subepochs:', len(subepochs_stim))
         print('Number of stimulation OFF subepochs:', len(subepochs_non_stim))
         print('Subepoch', subepochs_stim)
+        print('Bad subepoch list', bad_subepochs_stim)
         
         # Concatenate epochs
-        all_data_stim = np.concatenate([epoch.get_data() for epoch in subepochs_stim_resampled], axis=0)
-        all_data_non_stim = np.concatenate([epoch.get_data() for epoch in subepochs_non_stim_resampled], axis=0)
+        all_data_stim = np.concatenate([epoch.get_data() for epoch in subepochs_stim], axis=0)
+        all_data_non_stim = np.concatenate([epoch.get_data() for epoch in subepochs_non_stim], axis=0)
+
+        # Check the sampling rate
+        sampling_rate = int(subepochs_stim[0].info['sfreq'])
+        print(f'Sampling Rate: {sampling_rate} Hz')
 
         # Compute PSD of concatenated epochs
-        conc_psd_stim, freqs_conc = mne.time_frequency.psd_array_welch(all_data_stim, sfreq=sfreq, fmin=fmin, fmax=fmax, n_fft=sfreq, average='mean')
-        conc_psd_non_stim, freqs_conc = mne.time_frequency.psd_array_welch(all_data_non_stim, sfreq=sfreq, fmin=fmin, fmax=fmax, n_fft=sfreq, average='mean')
+        conc_psd_stim, freqs_conc = mne.time_frequency.psd_array_welch(all_data_stim, sfreq=sampling_rate, fmin=fmin, fmax=fmax, n_fft=sampling_rate, average='mean')
+        conc_psd_non_stim, freqs_conc = mne.time_frequency.psd_array_welch(all_data_non_stim, sfreq=sampling_rate, fmin=fmin, fmax=fmax, n_fft=sampling_rate, average='mean')
         
         print('shape concatenated epochs', conc_psd_stim.shape)
         print('freqs', freqs_conc)
@@ -751,8 +760,6 @@ def main():
 
         # Compute the mean PSD for stimulation OFF
         mean_psd_non_stim = np.mean(psd_non_stim_list, axis=0)
-        # print('Mean PSD for stimulation OFF:', mean_psd_non_stim)
-        print('Shape of mean PSD for stimulation OFF:', mean_psd_non_stim.shape)
 
         # Apply baseline correction to the stimulation ON PSDs
         psd_stim_corrected = baseline_correct_psd_on(psd_stim_list, mean_psd_non_stim)
@@ -767,9 +774,23 @@ def main():
 
         # Plot time series for a single epoch
         if subepochs_stim:
-            plot_single_epoch_time_series(subepochs_stim[-1], 'Time Series for Subepoch (Stimulation ON)')
+           # Prompt the user to enter the subepoch index
+            subepoch_index = int(input(f"Enter the subepoch index (0 to {len(subepochs_non_stim) - 1}): "))
+            # Validate the input index
+            if subepoch_index < 0 or subepoch_index >= len(subepochs_stim):
+                print("Invalid index. Please enter a number between 0 and", len(subepochs_stim) - 1)
+            else:
+                # Call the plotting function with the user-defined index
+                plot_single_epoch_time_series(subepochs_stim, subepoch_index=subepoch_index, title='Time Series for Subepoch (Stimulation ON)')
         if subepochs_non_stim:
-            plot_single_epoch_time_series(subepochs_non_stim[-1], 'Time Series for Subepoch (Stimulation OFF)')
+            # Prompt to enter the subepoch index
+            subepoch_index = int(input(f"Enter the subepoch index (0 to {len(subepochs_non_stim) - 1}): "))
+            # Validate the input index
+            if subepoch_index < 0 or subepoch_index >= len(subepochs_non_stim):
+                print("Invalid index. Please enter a number between 0 and", len(subepochs_non_stim) - 1)
+            else:
+                # Call the plotting function with the user-defined index
+                plot_single_epoch_time_series(subepochs_non_stim, subepoch_index=subepoch_index, title='Time Series for Subepoch (Stimulation OFF)')
 
         # Plot PSD for a single channel and epoch before and after baseline correction
         # plot_single_epoch_psd(subepochs_stim[-1], subepochs_non_stim[-1], mean_psd_non_stim, sfreq, fmax, 0, 'PSD of Subepoch')
