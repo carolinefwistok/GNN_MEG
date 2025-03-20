@@ -542,7 +542,7 @@ class MEGGraphs(Dataset):
                                                     self.freqs,
                                                     idx_filename,
                                                     idx_epoch,
-                                                    save_dir=f'F:\MEG GNN\GNN\Data\Connectivity')
+                                                    save_dir=f'F:\MEG GNN\GNN\Data\Connectivity\Subepoch_{self.duration}sec_{self.overlap}_overlap_freq_{self.fmin}_{self.fmax}')
 
                 # Define label
                 y = self._get_labels(label)
@@ -1075,7 +1075,7 @@ class MEGGraphs(Dataset):
         # Extract the filename from the idx_file tuple
         file_index, filename = idx_file
 
-        # Define a pattern to search for the edges file
+        # Define a pattern to search for the edges file -- Uncomment to search for previously saved edges
         if self.input_type == 'scout':
             pattern = os.path.join(save_dir, f"edges_(*, '{filename}')_{idx_epoch}_{method}_scout.pt")
         else:
@@ -1087,11 +1087,11 @@ class MEGGraphs(Dataset):
         print('Matching files:', matching_files)
 
         # Check if any matching files are found -- Uncomment to load previously saved edges
-        # if matching_files:
-        #     edge_filename = matching_files[0]
-        #     print(f"Loading edges from {edge_filename}")
-        #     edges = torch.load(edge_filename)
-        #     return edges['edge_index'], edges['edge_weight']
+        if matching_files:
+            edge_filename = matching_files[0]
+            print(f"Loading edges from {edge_filename}")
+            edges = torch.load(edge_filename)
+            return edges['edge_index'], edges['edge_weight']
 
         # Perform connectivity calculation
         conn = mne_connectivity.spectral_connectivity_time(
@@ -1123,13 +1123,13 @@ class MEGGraphs(Dataset):
         print("Min weight:", edge_weight.min())
 
         # Save the edges to disk -- Uncomment to save the edges
-        # os.makedirs(save_dir, exist_ok=True)
-        # if self.input_type == 'scout':
-        #     save_edge_filename = os.path.join(save_dir, f"edges_{idx_file}_{idx_epoch}_{method}_scout.pt")
-        # elif self.input_type == 'fif':
-        #     save_edge_filename = os.path.join(save_dir, f"edges_{idx_file}_{idx_epoch}_{method}.pt")
-        # torch.save({'edge_index': edge_index, 'edge_weight': edge_weight}, save_edge_filename)
-        # print(f"Edges saved to {save_edge_filename}")
+        os.makedirs(save_dir, exist_ok=True)
+        if self.input_type == 'scout':
+            save_edge_filename = os.path.join(save_dir, f"edges_{idx_file}_{idx_epoch}_{method}_scout.pt")
+        elif self.input_type == 'fif':
+            save_edge_filename = os.path.join(save_dir, f"edges_{idx_file}_{idx_epoch}_{method}.pt")
+        torch.save({'edge_index': edge_index, 'edge_weight': edge_weight}, save_edge_filename)
+        print(f"Edges saved to {save_edge_filename}")
 
         return edge_index, edge_weight
     
