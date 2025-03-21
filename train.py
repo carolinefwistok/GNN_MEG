@@ -91,7 +91,7 @@ def train_func(config, dataset, dataset_train, y_train, model_name):
     model = GNN(
         n_layers=config['n_layers'],
         dropout_rate=config['dropout_rate'],
-        conv1_hidden_channels=config['conv1_hidden_channels'], 
+        conv_hidden_channels=config['conv_hidden_channels'], 
         conv2_hidden_channels=config['conv1_hidden_channels'],
         conv3_hidden_channels=config['conv1_hidden_channels'],
         conv4_hidden_channels=config['conv1_hidden_channels'],
@@ -114,24 +114,18 @@ def train_func(config, dataset, dataset_train, y_train, model_name):
         subset_train,
         config['batch_size'],
         shuffle=True,
-        # num_workers=4
     )
     val_loader = DataLoader(
         subset_val,
         config['batch_size'],
         shuffle=True,
-        # num_workers=4
     )
 
     # Define number of epochs
     num_epochs = 100
 
     # Define optimizer and criterion with weight decay
-    optimizer = torch.optim.Adam(model.parameters(), lr=config['lr'], weight_decay=config['weight_decay'])
-
-    # Define learning rate scheduler
-    # scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5, cooldown=2, verbose=True)
-    # scheduler = lr_scheduler.OneCycleLR(optimizer, max_lr=config['lr']*10, steps_per_epoch=len(train_loader), epochs=num_epochs)
+    optimizer = torch.optim.Adam(model.parameters(), lr=config['lr'])
 
     # Early stopping parameters
     best_val_loss = float('inf')  # Initialize best validation loss to infinity
