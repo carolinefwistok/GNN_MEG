@@ -561,7 +561,9 @@ class MEGGraphs(Dataset):
                 gc.collect()
 
         # Save bad subepochs indices to a file
-        with open(os.path.join(self.processed_dir, 'bad_subepochs', f'bad_subepochs_{idx_files}.txt'), 'w') as f:
+        bad_subepochs_dir = os.path.join(self.processed_dir, 'bad_subepochs')
+        os.makedirs(bad_subepochs_dir, exist_ok=True)
+        with open(os.path.join(bad_subepochs_dir, f'bad_subepochs_{idx_files}.txt'), 'w') as f:
             for idx in bad_subepochs_indices:
                 f.write(f"{idx}\n")
 
@@ -1183,14 +1185,6 @@ class MEGGraphs(Dataset):
                 corrected_psd = (psd - mean_psd_off) / mean_psd_off
                 graph.x = torch.tensor(corrected_psd, dtype=torch.float)
             corrected_graphs.append(graph)
-        
-        # # Ensure all values are non-negative by shifting the minimum value to zero
-        # min_value = min((graph.x.min().item() for graph in corrected_graphs if graph.x is not None), default=0)
-        # if min_value < 0:
-        #     shift_value = abs(min_value)
-        #     for graph in corrected_graphs:
-        #         if graph.x is not None:
-        #             graph.x = graph.x + shift_value
         
         return corrected_graphs
 
