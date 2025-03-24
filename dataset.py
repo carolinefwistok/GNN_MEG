@@ -1052,7 +1052,7 @@ class MEGGraphs(Dataset):
         nodes = torch.tensor(np.squeeze(psd_sqrt), dtype=torch.float)
         return nodes
     
-    def _get_edges(self, epoch_data, sfreq, method, freqs, idx_file, idx_epoch, save_dir=f'F:\MEG GNN\GNN\Data\Connectivity'): 
+    def _get_edges(self, epoch_data, sfreq, method, fmin, fmax, idx_file, idx_epoch, save_dir=f'F:\MEG GNN\GNN\Data\Connectivity'): 
         '''
         Calculates a connectivity metric between each of the nodes, based on the method you provide as an input.
         Based on the non-zero indices of the resulting connectivity matrix, the edges are defined.
@@ -1062,7 +1062,8 @@ class MEGGraphs(Dataset):
             - epoch_data    : The epoch currently being processed
             - sfreq         : The defined resampling frequency
             - method        : String of connectivity metric 
-            - freqs         : Dictionary of frequencies for connectivity calculation
+            - fmin          : The defined minimum frequency for the connectivity calculation
+            - fmax          : The defined maximum frequency for the connectivity calculation
             - idx_file      : String of file path to save the connectivity matrix
             - idx_epoch     : String of epoch index to save the connectivity matrix
             - save_dir      : String of directory to save the connectivity matrix
@@ -1098,11 +1099,11 @@ class MEGGraphs(Dataset):
         # Perform connectivity calculation
         conn = mne_connectivity.spectral_connectivity_time(
             epoch_data,
-            freqs=freqs['freqs'],
+            freqs=np.arange(fmin, fmax + 1, 1),  # Set frequency range, frequency resolution of 1 Hz
             method=method,
             sfreq=sfreq,
-            fmin=freqs['fmin'],
-            fmax=freqs['fmax'],
+            fmin=fmin,
+            fmax=fmax,
             faverage=True,
             verbose=False
         )
