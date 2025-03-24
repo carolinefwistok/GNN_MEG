@@ -108,9 +108,6 @@ def create_dataset():
 
     # Define connectivity method for defining edges
     conn_method = 'pli'
-    freqs = {'fmin': fmin,
-            'fmax': fmax,
-            'freqs': np.linspace(1, fmax, (fmax - 1) * 4 + 1)}
 
     # Define root directory to the 'raw' and 'processed' folders that store the MEG data and the graphs, respectively
     root_directory = r'F:\MEG GNN\GNN\Data'
