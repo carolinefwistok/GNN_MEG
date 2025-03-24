@@ -561,8 +561,6 @@ class MEGGraphs(Dataset):
                 gc.collect()
 
         # Save bad subepochs indices to a file
-        bad_subepochs_dir = os.path.join(self.processed_dir, 'bad_subepochs')
-        os.makedirs(bad_subepochs_dir, exist_ok=True)
         with open(os.path.join(bad_subepochs_dir, f'bad_subepochs_{idx_files}.txt'), 'w') as f:
             for idx in bad_subepochs_indices:
                 f.write(f"{idx}\n")
