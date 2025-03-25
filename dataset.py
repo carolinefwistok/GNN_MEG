@@ -270,11 +270,13 @@ class MEGGraphs(Dataset):
                         elif graph.y.item() == 0:
                             num_stim_off += 1
                 
-                # Append loaded graphs and actual number of graphs per file
+                # Append graph to graphs list
                 self.graphs.append(graph)
-                self.actual_epochs_per_file.append(num_graphs)
-                self.actual_stim_on_per_file.append(num_stim_on)
-                self.actual_stim_off_per_file.append(num_stim_off)
+
+            # Append loaded graphs and actual number of graphs per file
+            self.actual_epochs_per_file.append(num_graphs)
+            self.actual_stim_on_per_file.append(num_stim_on)
+            self.actual_stim_off_per_file.append(num_stim_off)
     
     def create_raw_from_scouts(self, scouts_data):
         '''
@@ -479,6 +481,10 @@ class MEGGraphs(Dataset):
 
         # Initialize a list to store indices of bad subepochs
         bad_subepochs_indices = []
+
+        # Ensure the directory for bad subepochs exists
+        bad_subepochs_dir = os.path.join(self.processed_dir, 'bad_subepochs')
+        os.makedirs(bad_subepochs_dir, exist_ok=True)
 
         # Create a graph for each subepoch
         total_subepochs = len(self.subepochs)
@@ -1020,26 +1026,15 @@ class MEGGraphs(Dataset):
             - nodes         : Torch tensor object of the node feature matrix 
         '''
 
-        # For time series data, perform PSD calculation with time series data in [fT]
-        if self.input_type == 'fif':
-            psd, _ = mne.time_frequency.psd_array_welch(epoch_data,
-                                                        fmin=fmin,
-                                                        fmax=fmax, 
-                                                        sfreq=sfreq,
-                                                        n_fft=sfreq,
-                                                        average='mean',
-                                                        remove_dc=True,
-                                                        output='power')
-        # For scout data, perform PSD calculation with scout data in [pA]
-        elif self.input_type == 'scout':
-            psd, _ = mne.time_frequency.psd_array_welch(epoch_data,
-                                            fmin=fmin,
-                                            fmax=fmax, 
-                                            sfreq=sfreq,
-                                            n_fft=sfreq,
-                                            average='mean',
-                                            remove_dc=True,
-                                            output='power')
+        # Perform PSD calculation with epoch data in [fT] for fif data and epoch data in [pA] for scout data
+        psd, _ = mne.time_frequency.psd_array_welch(epoch_data,
+                                                    fmin=fmin,
+                                                    fmax=fmax, 
+                                                    sfreq=sfreq,
+                                                    n_fft=sfreq,
+                                                    average='mean',
+                                                    remove_dc=True,
+                                                    output='power')
 
         print('psd shape', psd.shape)
 
