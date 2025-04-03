@@ -19,7 +19,7 @@ class MEGGraphs(Dataset):
     '''
     Creates a Dataset object of graphs out of the MEG data. 
     '''
-    def __init__(self, input_type, root, filenames, stim_info_dict, duration, overlap, conn_method, freqs, fmin, fmax, ramp_time, scout_data_list=None):
+    def __init__(self, input_type, root, filenames, stim_info_dict, duration, overlap, conn_method, freqs, fmin, fmax, ramp_time, conn_save_dir, scout_data_list=None):
         '''
         Initializes all the inputs given to the class.
 
@@ -35,6 +35,7 @@ class MEGGraphs(Dataset):
             - fmin              : minimum frequency for PSD calculation
             - fmax              : maximum frequency for PSD calculation
             - ramp_time         : time in seconds that is removed in the beginning and end of each epoch
+            - conn_save_dir     : directory where connectivity matrices are saved per subepoch
             - scout_data_list   : list of dictionaries with scout data, only added if input_type is 'scouts'
 
         OUTPUT: N/A
@@ -234,6 +235,17 @@ class MEGGraphs(Dataset):
         print(f'Epochs per file: {epochs_per_file}')
         print(f'Stim ON epochs per file: {stim_on_per_file}')
         print(f'Stim OFF epochs per file: {stim_off_per_file}')
+
+        # Define the path to the output text file
+        output_file = os.path.join(self.processed_dir, 'subepoch_counts.txt')
+
+        # Write the subepoch counts to the text file
+        with open(output_file, 'w') as f:
+            f.write("Subepoch Counts Per File:\n")
+            for idx, filename in enumerate(self.filenames):
+                f.write(f"{filename}: {epochs_per_file[idx]} subepochs\n")
+
+        print(f"Subepoch counts written to {output_file}")
         return total_epochs, epochs_per_file, stim_on_per_file, stim_off_per_file, sfreq
     
     def load_existing_graphs(self):
@@ -347,12 +359,7 @@ class MEGGraphs(Dataset):
                 # Store corrected graphs in self.graphs
                 self.graphs.extend(corrected_graphs)
                 print(f'Graphs for file: {len(graphs_file)}')
-
-                # # Track the actual number of graphs created per file
-                # self.actual_epochs_per_file.append(len(valid_graphs_file))
-                # self.actual_stim_on_per_file.append(sum(1 for graph in valid_graphs_file if graph.y is not None and graph.y.item() == 1))
-                # self.actual_stim_off_per_file.append(sum(1 for graph in valid_graphs_file if graph.y is not None and graph.y.item() == 0))
-
+                
                 # Count stimulation ON graphs created per file
                 stim_on_count = sum(1 for graph in valid_graphs_file if graph.y is not None and graph.y.item() == 1)
                 self.actual_stim_on_per_file.append(stim_on_count)
@@ -409,7 +416,7 @@ class MEGGraphs(Dataset):
         self.filename = filename
         raw_path = self.raw_paths[idx_files]
 
-        # Check input type of the file
+        # If input type is 'fif', load fif file data and keep relevant channels
         if self.input_type == 'fif':
             # Load data and keep relevant channels
             self.raw = self.load_raw_data(raw_path)
@@ -454,13 +461,15 @@ class MEGGraphs(Dataset):
                                                                          self.overlap,
                                                                          self.ramp_time,
                                                                          label='stim',
-                                                                         threshold=100)
+                                                                         threshold_fif=100,
+                                                                         threshold_scout=300)
         self.subepochs_non_stim, self.bad_subepochs_non_stim = self.split_epochs(self.epochs_non_stim, 
                                                                                  self.duration,
                                                                                  self.overlap,
                                                                                  self.ramp_time,
                                                                                  label='non_stim',
-                                                                                 threshold=100)
+                                                                                 threshold_fif=100,
+                                                                                 threshold_scout=300)
 
         # Check the number of subepochs created
         print(f"Subepochs stim: {len(self.subepochs_stim)}, Subepochs non-stim: {len(self.subepochs_non_stim)}")
@@ -497,8 +506,11 @@ class MEGGraphs(Dataset):
                 print('total idx', [total_idx for total_idx, _ in combined_bad_subepochs])
                 bad_subepoch = next((subepoch for total_idx, subepoch in combined_bad_subepochs if total_idx == idx_epoch), None)
                 if bad_subepoch is not None:
+                    # Convert data to appropriate unit, based on the data input type
+                    scaling_factor = 10**15 if self.input_type == 'fif' else 10**12
+                    
                     # For each bad subepoch, make a plot and save it to the bad subepoch folder
-                    avg_epoch_data = np.mean(bad_subepoch.get_data()*10**15, axis=1).squeeze()
+                    avg_epoch_data = np.mean(bad_subepoch.get_data()*scaling_factor, axis=1).squeeze())
                     plt.figure(figsize=(10, 6))
                     plt.plot(bad_subepoch.times, avg_epoch_data.T)
                     plt.title(f'Bad Subepoch: graph_{idx_files}_{idx_epoch}')
@@ -530,14 +542,10 @@ class MEGGraphs(Dataset):
                 epoch_resampled = epoch.resample(sfreq=resample_freq)
 
                 # Convert data to appropriate unit, based on the data input type
-                if self.input_type == 'fif':
-                    # Convert data to femtoTesla (fT)
-                    epoch_data = epoch_resampled.get_data() * 10**15
-                elif self.input_type == 'scout':
-                    # Convert data to picoAmpere (pA-m)
-                    epoch_data = epoch_resampled.get_data() * 10**12
-
+                scaling_factor = 10**15 if self.input_type == 'fif' else 10**12
+                epoch_data = epoch_resampled.get_data() * scaling_factor
                 print('Epoch data shape:', epoch_data.shape)
+                
                 # Get nodes with features
                 nodes = self._get_nodes(epoch_data, resample_freq, self.fmin, self.fmax)
 
@@ -545,10 +553,11 @@ class MEGGraphs(Dataset):
                 edge_index, edge_weight = self._get_edges(epoch_data,
                                                     resample_freq, 
                                                     self.conn_method,
-                                                    self.freqs,
+                                                    self.fmin,
+                                                    self.fmax,
                                                     idx_filename,
                                                     idx_epoch,
-                                                    save_dir=f'F:\MEG GNN\GNN\Data\Connectivity\Subepoch_{self.duration}sec_{self.overlap}_overlap_freq_{self.fmin}_{self.fmax}')
+                                                    self.conn_save_dir)
 
                 # Define label
                 y = self._get_labels(label)
@@ -557,7 +566,7 @@ class MEGGraphs(Dataset):
                 graph = Data(x=nodes, edge_index=edge_index, edge_attr=edge_weight, y=y)
                 print(f'graph {idx_files} {idx_epoch}: {graph}')
                 if graph.x is None:
-                    print(f'LET OP, graph {idx_filename} {idx_epoch} is None')
+                    print(f'graph {idx_filename} {idx_epoch} is None')
 
                 # Store the graph to the graph list
                 graphs_list.append(graph)
@@ -841,7 +850,7 @@ class MEGGraphs(Dataset):
         print(f"Number of epochs created: {len(epochs)}")
         return epochs
 
-    def split_epochs(self, epochs, duration, overlap, ramp_time, label, threshold):
+    def split_epochs(self, epochs, duration, overlap, ramp_time, label, threshold_fif=None, threshold_scout=None):
         '''
         Splits each epoch into subepochs of initialized duration and overlap and returns a list of all subepochs.
 
@@ -851,7 +860,8 @@ class MEGGraphs(Dataset):
             - overlap           : overlap between subepochs in seconds
             - ramp_time         : time in seconds that is removed in the beginning and end of each subepoch (to account for ramping of stimulation effects)
             - label             : string defining whether this epoch is for stimulation ON or OFF
-            - threshold         : threshold for the subepochs to be considered as bad subepochs and therby removed from further analysis
+            - threshold_fif     : threshold for the subepochs in fif file to be considered as bad subepochs and therby removed from further analysis
+            - threshold_scout   : threshold for the subepochs in scout file to be considered as bad subepochs and therby removed from further analysis
 
         OUTPUT: 
             - subepochs_list    : list of subepochs of length 'duration'
@@ -867,6 +877,9 @@ class MEGGraphs(Dataset):
         subepochs_list = []
         bad_subepochs_list = []
         total_subepochs = 0
+
+        # Determine the scaling factor based on the input type
+        scaling_factor = 10**15 if self.input_type == 'fif' else 10**12
 
         # Duration is not corresponding to the epoch length, so cropping is needed
         if duration != length_epoch:
@@ -921,7 +934,7 @@ class MEGGraphs(Dataset):
                 subepochs_count = 0
 
                 # Load data from epoch
-                epoch_data = epochs[idx].get_data() * 10**15
+                epoch_data = epochs[idx].get_data() * scaling_factor
 
                 # Calculate the median and MAD for the entire epoch
                 epoch_median = np.median(epoch_data)
@@ -936,10 +949,12 @@ class MEGGraphs(Dataset):
                     subepoch = epoch.crop(tmin=tmin, tmax=tmax)
 
                     # Detect bad epochs based on epoch median, MAD and maximum deviation of subepoch
-                    subepoch_median = np.median(subepoch.get_data() * 10**15)
-                    max_deviation = np.max(np.abs(subepoch.get_data() * 10**15 - epoch_median))
+                    subepoch_median = np.median(subepoch.get_data() * scaling_factor)
+                    max_deviation = np.max(np.abs(subepoch.get_data() * scaling_factor - epoch_median))
                     deviation_score = max_deviation / epoch_mad if epoch_mad != 0 else np.inf
-                    # deviation_score = (max_deviation - epoch_median) / epoch_mad
+                    
+                    # Define threshold based on input type
+                    threshold = threshold_fif if self.input_type == 'fif' else threshold_scout
                     
                     # If the deviation score exceeds the threshold, mark the epoch as bad
                     if deviation_score > threshold:
@@ -955,7 +970,7 @@ class MEGGraphs(Dataset):
                     total_subepochs += 1
 
         # Duration is corresponding to the epoch length, so no cropping is needed
-        else:       
+        else:
             # Define empty list to fill with subepochs
             subepochs_list = []
             
@@ -1045,7 +1060,7 @@ class MEGGraphs(Dataset):
         nodes = torch.tensor(np.squeeze(psd_sqrt), dtype=torch.float)
         return nodes
     
-    def _get_edges(self, epoch_data, sfreq, method, fmin, fmax, idx_file, idx_epoch, save_dir=f'F:\MEG GNN\GNN\Data\Connectivity'): 
+    def _get_edges(self, epoch_data, sfreq, method, fmin, fmax, idx_file, idx_epoch, conn_save_dir): 
         '''
         Calculates a connectivity metric between each of the nodes, based on the method you provide as an input.
         Based on the non-zero indices of the resulting connectivity matrix, the edges are defined.
@@ -1060,6 +1075,7 @@ class MEGGraphs(Dataset):
             - idx_file      : String of file path to save the connectivity matrix
             - idx_epoch     : String of epoch index to save the connectivity matrix
             - save_dir      : String of directory to save the connectivity matrix
+            - conn_save_dir : String of directory to save the connectivity matrix
         
         OUTPUT:
             - edge_index    : Torch tensor object of indices of connected nodes (edges)
@@ -1073,9 +1089,9 @@ class MEGGraphs(Dataset):
 
         # Define a pattern to search for the edges file -- Uncomment to search for previously saved edges
         if self.input_type == 'scout':
-            pattern = os.path.join(save_dir, f"edges_(*, '{filename}')_{idx_epoch}_{method}_scout.pt")
+            pattern = os.path.join(conn_save_dir, f"edges_(*, '{filename}')_{idx_epoch}_{method}_scout.pt")
         else:
-            pattern = os.path.join(save_dir, f"edges_(*, '{filename}')_{idx_epoch}_{method}.pt")
+            pattern = os.path.join(conn_save_dir, f"edges_(*, '{filename}')_{idx_epoch}_{method}.pt")
         print('Pattern:', pattern)
 
         # Search for files matching the pattern
@@ -1119,11 +1135,11 @@ class MEGGraphs(Dataset):
         print("Min weight:", edge_weight.min())
 
         # Save the edges to disk -- Uncomment to save the edges
-        os.makedirs(save_dir, exist_ok=True)
+        os.makedirs(conn_save_dir, exist_ok=True)
         if self.input_type == 'scout':
-            save_edge_filename = os.path.join(save_dir, f"edges_{idx_file}_{idx_epoch}_{method}_scout.pt")
+            save_edge_filename = os.path.join(conn_save_dir, f"edges_{idx_file}_{idx_epoch}_{method}_scout.pt")
         elif self.input_type == 'fif':
-            save_edge_filename = os.path.join(save_dir, f"edges_{idx_file}_{idx_epoch}_{method}.pt")
+            save_edge_filename = os.path.join(conn_save_dir, f"edges_{idx_file}_{idx_epoch}_{method}.pt")
         torch.save({'edge_index': edge_index, 'edge_weight': edge_weight}, save_edge_filename)
         print(f"Edges saved to {save_edge_filename}")
 
@@ -1311,11 +1327,25 @@ class MEGGraphs(Dataset):
     
     def remove_bad_graphs(self):
         '''
-        Moves bad graph files to a separate folder for bad epoch and renames the remaining graph files in the processed directory.
+        Moves all graph files to an "all_graphs" folder, then moves bad graph files to a separate folder for bad epochs,
+        and renames the remaining graph files in the processed directory.
 
         INPUT: N/A
         OUTPUT: N/A
         '''
+
+        # Create a directory for all graphs if it doesn't exist
+        all_graphs_dir = os.path.join(self.processed_dir, 'all_graphs')
+        os.makedirs(all_graphs_dir, exist_ok=True)
+
+        # Copy all graph files to the "all_graphs" folder
+        for idx_files in range(len(self.filenames)):
+            for idx_epoch in range(self.epochs_per_file[idx_files]):
+                file_name = f'graph_{idx_files}_{idx_epoch}.pt'
+                full_path = os.path.join(self.processed_dir, file_name)
+                if os.path.exists(full_path):
+                    shutil.copy(full_path, os.path.join(all_graphs_dir, file_name))
+                    print(f"Copied {file_name} to all_graphs folder")
 
         # Create a directory for bad subepochs if it doesn't exist
         bad_subepochs_dir = os.path.join(self.processed_dir, 'bad_subepochs')
