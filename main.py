@@ -124,7 +124,8 @@ def create_dataset():
                             freqs=freqs,
                             fmin=fmin,
                             fmax=fmax,
-                            ramp_time=ramp_time
+                            ramp_time=ramp_time,
+                            conn_save_dir=f'F:\MEG GNN\GNN\Data\Connectivity\Subepoch_scouts_{duration}sec_{overlap}overlap_freq_{fmin}_{fmax}Hz',
         )
     # If the input is scout time series data, add the scouts_data_list argument
     elif input_type == 'scout':
@@ -139,6 +140,7 @@ def create_dataset():
                             fmin=fmin,
                             fmax=fmax,
                             ramp_time=ramp_time,
+                            conn_save_dir=f'F:\MEG GNN\GNN\Data\Connectivity\Subepoch_scouts_{duration}sec_{overlap}overlap_freq_{fmin}_{fmax}Hz',
                             scout_data_list=scouts_data_list  # Only added if input_type is 'scout'
         )
 
@@ -264,7 +266,7 @@ def train_hyperparameters(dataset, dataset_train, y_train, model_name=None):
         time_attr="training_iteration",
         max_t=100,
         grace_period=25,
-        reduction_factor=6
+        reduction_factor=3
     )
 
     # Define path where results need to be stored
@@ -389,7 +391,11 @@ def filter_entire_dataset(dataset, best_result):
     # Apply edge filtering to the entire dataset
     filtered_dataset_complete = [edge_filtering(graph, top_k, threshold) for graph in graph_list]
 
-    return filtered_dataset_complete
+
+    # Retrieve the number of edges in each graph
+    num_edges = [graph.edge_index.shape[1] for graph in filtered_dataset_complete]
+
+    return filtered_dataset_complete, num_edges
 
 def main(run_state, model_name, generate_plots):
     '''
@@ -490,10 +496,11 @@ def main(run_state, model_name, generate_plots):
         print('Best params:', best_params)
 
         # Filter the entire dataset using the best hyperparameters for edge filtering
-        filtered_dataset_complete = filter_entire_dataset(dataset, best_result)
+        filtered_dataset_complete, num_edges = filter_entire_dataset(dataset, best_result)
+        print('Number of edges:', num_edges)
 
         # Load and test a saved model on the current dataset
-        acc_test, roc_auc, precision, recall, conf_matrix = load_and_test_model(model_path, dataset, filtered_dataset_complete)
+        acc_test, roc_auc, precision, recall, conf_matrix = load_and_test_model(best_result, dataset, filtered_dataset_complete)
         print(f'Test accuracy: {acc_test}')
 
         # Save metrics to text file
