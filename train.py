@@ -91,7 +91,7 @@ def train_func(config, dataset, dataset_train, y_train, model_name):
     model = GNN(
         n_layers=config['n_layers'],
         dropout_rate=config['dropout_rate'],
-        conv_hidden_channels=config['conv_hidden_channels'], 
+        conv1_hidden_channels=config['conv1_hidden_channels'], 
         conv2_hidden_channels=config['conv1_hidden_channels'],
         conv3_hidden_channels=config['conv1_hidden_channels'],
         conv4_hidden_channels=config['conv1_hidden_channels'],
@@ -346,43 +346,41 @@ def test_best_model(best_result, dataset, filtered_dataset_test):
 
     return acc_test, roc_auc, precision, recall, conf_matrix
 
-def load_and_test_model(model_path, dataset, filtered_dataset_test):
+def load_and_test_model(best_result, dataset, filtered_dataset_test):
     '''
     Loads the saved model and tests it on new data.
 
     INPUTS:
-        - model_path    : Path to the saved model file
-        - dataset       : Dataset of graphs for testing (new data, as long as the number of classes is the same)
+        - best_result           : Result object of results of best hyperparameter configuration
+        - dataset               : Dataset of graphs for testing
+        - filtered_dataset_test : Filtered dataset for testing
     
     OUTPUT: 
-        - acc_test      : Float of accuracy of model's predictions on the test data
+        - acc_test              : Float of accuracy of model's predictions on the test data
     '''
-
-    # Load the saved model's state dictionary and configuration parameters
-    checkpoint = torch.load(model_path, weights_only=True)
-    model_state_dict = checkpoint['model_state_dict']
-    config = checkpoint['config']
 
     # Initialize the model with the saved configuration parameters
     model = GNN(
-        n_layers=config['n_layers'],
-        dropout_rate=config['dropout_rate'],
-        conv1_hidden_channels=config['conv1_hidden_channels'], 
-        conv2_hidden_channels=config['conv1_hidden_channels'],
-        conv3_hidden_channels=config['conv1_hidden_channels'],
-        conv4_hidden_channels=config['conv1_hidden_channels'],
+        n_layers=best_result.config['n_layers'],
+        dropout_rate=best_result.config['dropout_rate'],
+        conv1_hidden_channels=best_result.config['conv1_hidden_channels'], 
+        conv2_hidden_channels=best_result.config['conv1_hidden_channels'],
+        conv3_hidden_channels=best_result.config['conv1_hidden_channels'],
+        conv4_hidden_channels=best_result.config['conv1_hidden_channels'],
         dataset=dataset,
-        top_k=config['top_k'],
-        threshold=config['threshold']
+        top_k=best_result.config['top_k'],
+        threshold=best_result.config['threshold']
     )
 
-    # Load the saved model's state dictionary
-    model.load_state_dict(model_state_dict)
+    # Retrieve trained model parameters from the checkpoint of the best result and load onto the initialized model
+    with best_result.checkpoint.as_directory() as checkpoint_dir:
+        state_dict = torch.load(os.path.join(checkpoint_dir, 'checkpoint.pt'), weights_only=True)
+        model.load_state_dict(state_dict['model_state'])
 
     # Batch new data with the best batch size
     test_loader = DataLoader(
         filtered_dataset_test, 
-        config['batch_size'],
+        best_result.config['batch_size'],
         shuffle=False
     )
     
@@ -394,11 +392,9 @@ def load_and_test_model(model_path, dataset, filtered_dataset_test):
     y_true = []
     y_pred = []
     for data in test_loader:
-        out = model(data.x, data.edge_index, data.edge_attr, data.batch)
-        # print('Out', out)
-        # prob = F.softmax(out, dim=1)
-        # print('Probability', prob)
-        pred = out.argmax(dim=1)
+        out = model(data.x, data.edge_index, data.edge_attr, data.batch, temperature=2)
+        prob = F.softmax(out, dim=1)
+        pred = prob.argmax(dim=1)
         correct += int((pred == data.y).sum())
 
         # Append the true and predicted labels
