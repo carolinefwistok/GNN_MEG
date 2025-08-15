@@ -9,10 +9,10 @@ from mne import preprocessing
 import matplotlib.pyplot as plt
 
 # Specify the folder path containing .mat files from Fieldtrip
-folder_path = r'F:\MEG GNN\GNN\Data\Raw\Export from Brainstorm\FT data'
+folder_path = r'F:\MEG_GNN\GNN\Data\Raw\Export_from_Brainstorm\FT_data'
 
 # Specify output folder path for MNE Python format files
-output_folder = r'F:\MEG GNN\GNN\Data\Raw\Fif files - NOT USED'
+output_folder = r'F:\MEG_GNN\GNN\Data\Raw\Fif_files_NOT_USED'
 
 
 def load_ft_raw_from_folder(folder_path, var_name):
@@ -204,21 +204,38 @@ def load_ft_raw(fname, var_name):
 raw_objects = load_ft_raw_from_folder(folder_path, 'ftData')
 
 for filename, raw in raw_objects.items():
-    # Check if the raw object contains all 46 selected channels
-    selected_channels = ['MLO31', 'MLO23', 'MLO34',
-                        'MZO02',
-                        'MRO31', 'MRO23', 'MRO34',
-                        'MLT11', 'MLT23', 'MLT36', 'MLT24',
-                        'MLF22', 'MLF43', 'MLF55',
-                        'MZF02', 'MZF03', 
-                        'MRF22', 'MRF43', 'MRF55',
-                        'MRT11', 'MRT23', 'MRT36', 'MRT24',
-                        'MRC21', 'MRC23', 'MRC53', 'MRP23',
-                        'MLC21', 'MLC23', 'MLC53', 'MLP23',
-                        'MLP33', 'MLP44', 'MLP41', 'MLP54', 'MLP57',
-                        'MRP33', 'MRP44', 'MRP41', 'MRP54', 'MRP57',
-                        'MZP01',
-                        'MZC01', 'MZC02', 'MZC03','MZC04']
+    if filename in ['PT06c_TONIC_run01_FT_data.mat', 'PT06c_BURST_run02_FT_data.mat']:
+        print(f'File PT06c_TONIC_run01_FT_data_raw.fif or PT06c_BURST_run02_FT_data_raw.fif is loaded\n'
+            'A different set of channels is selected.')
+        selected_channels = ['MLO31', 'MLO23', 'MLO34',
+                            'MZO02',
+                            'MRO31', 'MRO23', 'MRO34',
+                            'MLT11', 'MLT23', 'MLT36', 'MLT24',
+                            'MLF32', 'MLF43', 'MLF55',
+                            'MZF02', 'MZF03', 
+                            'MRF32', 'MRF43', 'MRF55',
+                            'MRT11', 'MRT23', 'MRT36', 'MRT24',
+                            'MRC21', 'MRC23', 'MRC53', 'MRP23',
+                            'MLC21', 'MLC23', 'MLC53', 'MLP23',
+                            'MLP33', 'MLP44', 'MLP32', 'MLP54', 'MLP57',
+                            'MRP33', 'MRP44', 'MRP32', 'MRP54', 'MRP57',
+                            'MZP01',
+                            'MZC01', 'MZC02', 'MZC03','MZC04']
+    else:
+        selected_channels = ['MLO31', 'MLO23', 'MLO34',
+                            'MZO02',
+                            'MRO31', 'MRO23', 'MRO34',
+                            'MLT11', 'MLT23', 'MLT36', 'MLT24',
+                            'MLF22', 'MLF43', 'MLF55',
+                            'MZF02', 'MZF03', 
+                            'MRF22', 'MRF43', 'MRF55',
+                            'MRT11', 'MRT23', 'MRT36', 'MRT24',
+                            'MRC21', 'MRC23', 'MRC53', 'MRP23',
+                            'MLC21', 'MLC23', 'MLC53', 'MLP23',
+                            'MLP33', 'MLP44', 'MLP41', 'MLP54', 'MLP57',
+                            'MRP33', 'MRP44', 'MRP41', 'MRP54', 'MRP57',
+                            'MZP01',
+                            'MZC01', 'MZC02', 'MZC03','MZC04']
 
     available_channels = [ch for ch in selected_channels if ch in raw.ch_names]
     print('Number of nodes:', len(available_channels))
@@ -229,6 +246,59 @@ for filename, raw in raw_objects.items():
     if len(available_channels) != len(selected_channels):
         print(f'File {filename} does not contain all selected MEG channels!')
         print('Missing channels:', missing_channels)
+
+for filename, raw in raw_objects.items():
+    plt.figure(figsize=(10, 6))
+    raw.pick_channels(available_channels)
+    raw.crop(tmin=0, tmax=(raw.times[-1] - 30))
+    raw.filter(l_freq=0.1, h_freq=None)  # Apply a high-pass filter to remove low-frequency noise
+    raw.resample(sfreq=256)
+    data, times = raw[:, :]  # Get all channels and all time points
+    data = data * 10**15  # Convert data to femto Tesla (fT)
+    
+    # Loop through each channel and plot its data
+    for i, channel_data in enumerate(data):
+        plt.plot(times, channel_data, label=raw.info['ch_names'][i])
+    
+    plt.xlabel('Time (s)')
+    plt.ylabel('Signal (fT)')
+    plt.title(f'Raw Data for {filename}')
+    plt.legend(loc='upper right', fontsize='small', ncol=2)  # Adjust legend for readability
+    plt.tight_layout()
+    plt.show()
+
+    sfreq = raw.info['sfreq']  # Sampling frequency from the raw object
+
+    # Window and overlap
+    win_length = 4  # seconds
+    overlap = 0.5  # 50% overlap
+    n_samples = int(win_length * sfreq)
+    n_overlap = int(n_samples * overlap)
+
+    # Compute PSD using Welch method
+    psd, freqs = psd_array_welch(data, 
+                                sfreq=sfreq, 
+                                n_fft=n_samples, 
+                                n_overlap=n_overlap, 
+                                average='mean',
+                                remove_dc=True,
+                                output='power')
+    
+
+    # Convert PSD to fT/sqrt(Hz)
+    psd_sqrt = np.sqrt(psd)  # Take the square root of the PSD
+
+    # Visualizing the PSD
+    plt.plot(freqs, psd_sqrt.T, label=raw.info['ch_names'])
+    plt.xlabel('Frequency (Hz)')
+    plt.ylabel('Power Spectral Density (fT/sqrt(Hz))')
+    plt.title('Power Spectral Density for file ' + filename)
+    plt.xlim((0, np.max(freqs)))
+    plt.yscale("log")
+    plt.legend(loc='upper right', fontsize='small', ncol=2)
+    plt.grid()
+    plt.show()
+
 
 # Plot raw data for all raw objects
 plot_raw = False # Set to True to plot the raw objects
@@ -321,12 +391,60 @@ if plot_psd:
         plt.grid()
         plt.show()
 
-# for filename, raw in raw_objects.items():
-#     noisy_chs, flat_chs, scores = preprocessing.find_bad_channels_maxwell(raw, 
-#                                                                           cross_talk=None, 
-#                                                                           calibration=None,
-#                                                                           return_scores=True,
-#                                                                           coord_frame="meg", # mne has a method to transfer CTF's meg to head coord
-#                                                                           verbose=True)
-    
-#     print(f'Noisy channels for {filename}: {noisy_chs}')
+def crop_and_save_fif(raw, filename, tmin, tmax):
+    """
+    Loads a .fif file, crops it to a specified time range, and saves it with 'cropped' added to the filename.
+
+    INPUTS:
+        - file_path : str, path to the .fif file to be cropped
+        - tmin      : float, start time in seconds for cropping
+        - tmax      : float, end time in seconds for cropping
+
+    OUTPUT:
+        - cropped_file_path : str, path to the saved cropped .fif file
+    """
+    # Load the raw .fif file
+    print(f"Loading file: {filename}")
+    # Crop the raw data
+    print(f"Cropping file to time range: {tmin}s to {tmax}s")
+    raw.crop(tmin=tmin, tmax=tmax)
+
+    # Generate the new filename with 'cropped' added
+    base_name = os.path.basename(filename)
+    cropped_file_name = base_name.replace('.mat', f'_cropped_{tmin}_{tmax}_raw.fif')
+    cropped_file_path = os.path.join(output_folder, cropped_file_name)
+
+    # Save the cropped raw data
+    print(f"Saving cropped file to: {cropped_file_path}")
+    raw.save(cropped_file_path, overwrite=True)
+    return cropped_file_path
+
+cropping = True # Set to True to crop the file
+
+if cropping:
+    for filename, raw in raw_objects.items():
+        print(f"Processing file: {filename}")
+
+        tmin = 400  # Start cropping
+        tmax = None  # End cropping
+        cropped_file = crop_and_save_fif(raw, filename, tmin, tmax)
+        print(f"Cropped file saved at: {cropped_file}")
+
+        raw_cropped = read_raw_fif(cropped_file, preload=True)
+        # raw_cropped.plot(n_channels=10, scalings='auto', title="Cropped Data", show=True, block=True)
+
+        # Plot the PSD of the cropped data
+        print(f"Plotting PSD for cropped file: {filename}")
+        data_cropped, times_cropped = raw_cropped[:, :]
+        psd, freqs = psd_array_welch(data_cropped * 10**15, sfreq=raw.info['sfreq'], fmin=1, fmax=100, n_fft=2048)
+        psd_sqrt = np.sqrt(psd)  # Convert to fT/sqrt(Hz) if needed
+        plt.figure(figsize=(10, 5))
+        plt.plot(freqs, psd_sqrt.T, label=raw_cropped.info['ch_names'])
+        plt.xlabel('Frequency (Hz)')
+        plt.ylabel('Power Spectral Density (fT/sqrt(Hz))')
+        plt.title(f'PSD of Cropped Data: {filename}')
+        plt.xlim(0, 100)
+        plt.grid()
+        plt.tight_layout()
+        plt.legend(loc='upper right', fontsize='small', ncol=2)
+        plt.show()

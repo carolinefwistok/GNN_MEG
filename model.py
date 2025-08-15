@@ -61,7 +61,7 @@ class GNN(torch.nn.Module):
         else:
             raise ValueError('The number of layers exceeds 4!')
 
-    def forward(self, x, edge_index, edge_attr, batch):
+    def forward(self, x, edge_index, edge_attr, batch, temperature=2):
         '''
         Performs the layers initialized above.
         
@@ -107,6 +107,6 @@ class GNN(torch.nn.Module):
         x = self.lin(x)
         
         # Apply softmax function to the output with temperature parameter
-        # x = x / temperature
+        x = x / temperature
 
         return x

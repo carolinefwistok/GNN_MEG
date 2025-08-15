@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
-import os
-import regex as re
+import re
+import os 
 import math
 import mne
 import mne_connectivity
@@ -16,11 +16,13 @@ from tqdm import tqdm
 import shutil
 import matplotlib.pyplot as plt
 
+from data_utils import *
+
 class MEGGraphs(Dataset):
     '''
     Creates a Dataset object of graphs out of the MEG data. 
     '''
-    def __init__(self, input_type, root, filenames, stim_info_dict, duration, overlap, conn_method, fmin, fmax, ramp_time, conn_save_dir, freq_res=1, scout_data_list=None, processed_dir=None, threshold_scout=100):
+    def __init__(self, input_type, root, filenames, stim_info_dict, duration, overlap, conn_method, fmin, fmax, ramp_time, conn_save_dir, freq_res=1, scout_data_list=None, processed_dir=None):
         '''
         Initializes all the inputs given to the class.
 
@@ -38,8 +40,6 @@ class MEGGraphs(Dataset):
             - conn_save_dir     : directory where connectivity matrices are saved per subepoch
             - freq_res          : frequency resolution for PSD and PLI calculation
             - scout_data_list   : list of dictionaries with scout data, only added if input_type is 'scouts'
-            - processed_dir     : directory where processed graphs are saved, if None, defaults to 'processed' in root
-            - threshold_scout    : threshold for filtering bad subepochs in scout data, default is 100
 
         OUTPUT: N/A
         '''
@@ -60,7 +60,6 @@ class MEGGraphs(Dataset):
         self.top_k = None
         self.threshold = None
         self._processed_dir = processed_dir if processed_dir is not None else os.path.join(self.root, "processed")
-        self.threshold_scout = threshold_scout  # Default threshold for scout data, can be adjusted later
 
         # Initialize lists, will be calculated and filled later
         self.amount_epochs = None
@@ -69,10 +68,6 @@ class MEGGraphs(Dataset):
 
         # Retrieve the basic functionality from torch_geometric.data.Dataset
         super().__init__(root)
-
-    @property
-    def processed_dir(self):
-        return self._processed_dir
 
     @property
     def raw_file_names(self):
@@ -103,9 +98,8 @@ class MEGGraphs(Dataset):
         # Define the names of saved graphs
         graph_names = []
         for idx_files in range(len(self.filenames)):
-            patient_code, stim_type = self.extract_patient_and_stim(self.filenames[idx_files])
             for idx_epoch in range((self.epochs_per_file[idx_files])):
-                graph_names.append(f'graph_{patient_code}_{stim_type}_{idx_epoch}.pt')
+                graph_names.append(f'graph_{idx_files}_{idx_epoch}.pt')
         
         # Check if the files already exist in processed_dir
         all_files_exist = True
@@ -149,17 +143,6 @@ class MEGGraphs(Dataset):
         '''
 
         pass
-
-    def extract_patient_id(self, filename):
-        '''
-        Extracts the patient ID from the filename.
-        INPUT:
-            - filename : Name of the file from which to extract the patient ID
-        OUTPUT:
-            - patient_id : Patient ID extracted from the filename
-        '''
-        # Assuming the patient ID is the first part of the filename, split by underscore
-        return filename.split('_')[0]
 
     def extract_patient_and_stim(self, filename):
         '''
@@ -305,22 +288,19 @@ class MEGGraphs(Dataset):
 
         # Load graphs from processed directory
         for idx_files in range(len(self.filenames)):
-            # patient_id = self.extract_patient_id(self.filenames[idx_files])
-            patient_code, stim_type = self.extract_patient_and_stim(self.filenames[idx_files])
-            patient_id = patient_code
-            print(f'Loading existing graphs for patient {patient_id} and stimulation type {stim_type}')
+            patient_id, stim_type = self.extract_patient_and_stim(self.filenames[idx_files])
             num_graphs = 0
             num_stim_on = 0
             num_stim_off = 0
 
             # Loop over each subepoch in the file and load the exisiting graph file
             for idx_epoch in range(self.epochs_per_file[idx_files]):
-                graph_name = f'graph_{patient_code}_{stim_type}_{idx_epoch}.pt'
+                graph_name = f'graph_{idx_files}_{idx_epoch}.pt'
                 full_path = os.path.join(self.processed_dir, 'all_graphs', graph_name)
                 graph = torch.load(full_path, weights_only=False)
 
                 # Copy all graph files to the processed directory
-                src = full_path
+                src = os.path.join(full_path, graph_name)
                 dst = os.path.join(self.processed_dir, graph_name)
                 shutil.copy(src, dst)
 
@@ -345,250 +325,6 @@ class MEGGraphs(Dataset):
             self.actual_stim_on_per_file.append(num_stim_on)
             self.actual_stim_off_per_file.append(num_stim_off)
     
-    def process(self):
-        """
-        Processes all files one by one (sequentially).
-        For parallel processing, call process_one_file(idx_files) in separate processes.
-
-        INPUT: N/A
-        OUTPUT: N/A
-        """
-        for idx_files in range(len(self.filenames)):
-            self.process_one_file(idx_files)
-        print("Processing complete. Graphs are saved to disk.")
-
-    def process_one_file(self, idx_files):
-        """
-        Processes a single file (by index), creates and saves graphs immediately.
-
-        INPUT:
-            - idx_files : Index of the file to be processed from self.filenames
-        OUTPUT: N/A
-        """
-
-        # Specify the filename and patient ID, code and stimulation type
-        filename = self.filenames[idx_files]
-        # patient_id = self.extract_patient_id(filename)
-        patient_code, stim_type = self.extract_patient_and_stim(filename)
-        patient_id = patient_code
-        print(f'Processing file {filename}')
-        print(f'Patient ID: {patient_id}, Stimulation type: {stim_type}')
-
-        # Define the path to the raw data file
-        raw_path = self.raw_paths[idx_files]
-
-        # Load data according to the input type
-        if self.input_type == 'fif':
-            self.raw = self.load_raw_data(raw_path)
-        elif self.input_type == 'scout':
-            scouts_data_dict = self.scout_data_list[idx_files]
-            self.raw = self.create_raw_from_scouts(scouts_data_dict)
-
-        # Fetch the stimulation information for the current file
-        stim_info = self.stim_info_dict.get(filename, None)
-        if stim_info is None:
-            print(f"No stim info for {filename}, skipping.")
-            return
-
-        # Create events and epochs based on the stimulation information
-        self.events, self.event_id = self.create_events(stim_info)
-        self.epochs_stim = self.create_epochs(self.raw, self.events, self.event_id, self.ramp_time, label='stim')
-        self.epochs_non_stim = self.create_epochs(self.raw, self.events, self.event_id, self.ramp_time, label='non_stim')
-
-        print(f"Stim epochs: {len(self.epochs_stim)}, Non-stim epochs: {len(self.epochs_non_stim)}")
-
-        # Split epochs into subepochs based on duration and overlap and extract bad subepochs based on defined thresholds
-        self.subepochs_stim, self.bad_subepochs_stim = self.split_epochs(
-            self.epochs_stim, self.duration, self.overlap, self.ramp_time, label='stim', threshold_fif=100, threshold_scout=self.threshold_scout)
-        self.subepochs_non_stim, self.bad_subepochs_non_stim = self.split_epochs(
-            self.epochs_non_stim, self.duration, self.overlap, self.ramp_time, label='non_stim', threshold_fif=100, threshold_scout=self.threshold_scout)
-
-        print(f"Subepochs stim: {len(self.subepochs_stim)}, Subepochs non-stim: {len(self.subepochs_non_stim)}")
-        print(f'Bad subepochs stim ON: {self.bad_subepochs_stim}')
-        print(f'Bad subepochs stim OFF: {self.bad_subepochs_non_stim}')
-
-        # Concatenate subepochs and adjust bad subepochs indices
-        self.subepochs = self.concatenate_subepochs(self.subepochs_stim, self.subepochs_non_stim)
-        offset = len(self.subepochs_stim)
-        adjusted_bad_subepochs_non_stim = [(total_idx + offset, subepoch) for total_idx, subepoch in self.bad_subepochs_non_stim]
-        combined_bad_subepochs = self.bad_subepochs_stim + adjusted_bad_subepochs_non_stim
-        print(f'Combined bad subepochs: {combined_bad_subepochs}')
-        bad_subepochs_indices = []
-        bad_subepochs_dir = os.path.join(self.processed_dir, 'bad_subepochs')
-        os.makedirs(bad_subepochs_dir, exist_ok=True)
-
-        bad_indices_set = {idx for idx, _ in combined_bad_subepochs}
-
-        # Initialize a list to store graphs for the current file before baseline correction
-        graphs_file = []
-
-        # Process each subepoch and create graphs
-        total_subepochs = len(self.subepochs)
-        for idx_epoch in tqdm(range(total_subepochs), desc=f"Processing graphs for file {filename}\n"):
-            is_bad_subepoch = idx_epoch in bad_indices_set
-            graph_filename = os.path.join(self.processed_dir, f'graph_{patient_code}_{stim_type}_{idx_epoch}.pt')
-
-            # Check if the current subepoch is a bad subepoch
-            if is_bad_subepoch:
-                bad_subepoch = next((subepoch for total_idx, subepoch in combined_bad_subepochs if total_idx == idx_epoch), None)
-                # Save the bad subepoch to the bad subepochs directory and create an empty graph
-                if bad_subepoch is not None:
-                    scaling_factor = (
-                        10**15 if self.input_type == 'fif'
-                        else 10**12 if self.input_type == 'scout' and not self.threshold_scout == 40
-                        else 100
-                    )
-                    avg_epoch_data = np.mean(bad_subepoch.get_data()*scaling_factor, axis=1).squeeze()
-                    
-                    plt.figure(figsize=(10, 6))
-                    plt.plot(bad_subepoch.times, avg_epoch_data.T)
-                    plt.title(f'Bad Subepoch: graph_{patient_code}_{stim_type}_{idx_epoch}')
-                    plt.xlabel('Time (s)')
-                    plt.ylabel('Signal (fT)')
-                    plt.savefig(os.path.join(bad_subepochs_dir, f'bad_subepoch_{patient_code}_{stim_type}_{idx_epoch}.png'))
-                    plt.close()
-
-                    bad_graph = Data(x=None, edge_index=None, edge_attr=None, y=None)
-                    torch.save(bad_graph, graph_filename)
-                    torch.save(bad_subepoch, os.path.join(bad_subepochs_dir, f'bad_graph_{patient_code}_{stim_type}_{idx_epoch}.pt'))
-                    bad_subepochs_indices.append(idx_epoch)
-                    print(f'Bad subepoch, graph_{patient_code}_{stim_type}_{idx_epoch} is empty.')
-            else:
-                # Process the subepoch to create a graph
-                epoch = self.subepochs.load_data()[idx_epoch]
-                if self.subepochs.events[idx_epoch, 2] == self.event_id['stim']:
-                    label = 'stim'
-                elif self.subepochs.events[idx_epoch, 2] == self.event_id['non_stim']:
-                    label = 'non_stim'
-                
-                # Resample the epoch data to a fixed frequency and scale it accordingly
-                resample_freq = 256
-                epoch_resampled = epoch.resample(sfreq=resample_freq)
-                scaling_factor = (
-                    10**15 if self.input_type == 'fif'
-                    else 10**12 if self.input_type == 'scout' and not self.threshold_scout == 40
-                    else 100
-                )
-                print(f'Resampling epoch {idx_epoch} to {resample_freq} Hz with scaling factor {scaling_factor}')
-                epoch_data = epoch_resampled.get_data() * scaling_factor
-
-                plt.figure(figsize=(10, 6))
-                avg_epoch_data = np.mean(epoch_data, axis=1).squeeze()
-                plt.plot(epoch_resampled.times, avg_epoch_data.T)
-                plt.title(f'Epoch Resampled: graph_{patient_code}_{stim_type}_{idx_epoch}')
-                plt.xlabel('Time (s)')
-                plt.ylabel('Signal (fT)')
-
-                # Create directory for plotted graphs if it doesn't exist
-                plotted_graphs_dir = os.path.join(self.processed_dir, 'plotted_graphs')
-                os.makedirs(plotted_graphs_dir, exist_ok=True)
-                plt.savefig(os.path.join(plotted_graphs_dir, f'epoch_resampled_{patient_code}_{stim_type}_{idx_epoch}.png'))
-                plt.close()
-
-                # Define and compute the node features for the graph
-                nodes = self._get_nodes(epoch_data, resample_freq, self.fmin, self.fmax, self.freq_res)
-
-                # Define the edges and edge weights for the graph
-                edge_index, edge_weight = self._get_edges(
-                    epoch_data, resample_freq, self.conn_method, self.fmin, self.fmax,
-                    filename, idx_files, idx_epoch, self.conn_save_dir, self.freq_res)
-                
-                # Get the labels for the graph (ON corresponds to 1, OFF correspons to 0)
-                y = self._get_labels(label)
-
-                # Create the graph object and save it
-                graph = Data(x=nodes, edge_index=edge_index, edge_attr=edge_weight, y=y)
-                graph.patient_file = idx_files
-                graph.patient_id = patient_id
-                graphs_file.append(graph)
-        
-        # Apply baseline correction to all graphs for the current file
-        print(f"Applying baseline correction to {len(graphs_file)} graphs...")
-        
-        # Compute mean PSD for stimulation OFF epochs per file
-        mean_PSD_off = self.compute_mean_psd_off(graphs_file)
-        
-        # Apply baseline correction to all graphs based on the mean PSD of stimulation OFF epochs
-        corrected_graphs = self.apply_baseline_correction(graphs_file, mean_PSD_off)
-        
-        print(f"Baseline correction applied. Saving {len(corrected_graphs)} graphs...")
-        if len(corrected_graphs) == 0:
-            print(f"No valid graphs created for file {filename}. Skipping saving.")
-        else:
-            # Print the feature range of the first graph after baseline correction
-            if corrected_graphs[0].x is not None:
-                print(f"Feature range: {corrected_graphs[0].x.min().item()} to {corrected_graphs[0].x.max().item()}")
-        
-        valid_graph_indices = []
-        corrected_graph_idx = 0
-
-        # Save graphs with corresponding filenames
-        for idx_epoch in range(total_subepochs):
-            is_bad_subepoch = idx_epoch in bad_indices_set
-            graph_filename = os.path.join(self.processed_dir, f'graph_{patient_code}_{stim_type}_{idx_epoch}.pt')
-            
-            if not is_bad_subepoch and corrected_graph_idx < len(corrected_graphs):
-                # Save corrected graph with ORIGINAL index
-                torch.save(corrected_graphs[corrected_graph_idx], graph_filename)
-                valid_graph_indices.append(idx_epoch)
-                corrected_graph_idx += 1
-                print(f"Saved corrected graph: {graph_filename}")
-            elif is_bad_subepoch:
-                # Remove the bad graph from processed dir since it's already in bad_subepochs
-                if os.path.exists(graph_filename):
-                    os.remove(graph_filename)
-                    print(f"Removed bad graph from processed dir: {graph_filename}")
-
-        print(f"Valid graphs saved with indices: {valid_graph_indices}")
-
-        # Save bad subepochs indices to a file
-        patient_code, stim_type = self.extract_patient_and_stim(self.filenames[idx_files])
-        with open(os.path.join(bad_subepochs_dir, f'bad_subepochs_{patient_code}_{stim_type}.txt'), 'w') as f:
-            for idx in bad_subepochs_indices:
-                f.write(f"{idx}\n")
-
-        # Collect all graph filenames for this file
-        graph_filenames = []
-        total_subepochs = len(self.subepochs)
-        for idx_epoch in range(total_subepochs):
-            graph_filename = os.path.join(self.processed_dir, f'graph_{patient_code}_{stim_type}_{idx_epoch}.pt')
-            if os.path.exists(graph_filename):
-                graph_filenames.append(graph_filename)
-
-        # Count total graphs created
-        num_graphs = len(graph_filenames)
-        if not hasattr(self, "actual_epochs_per_file"):
-            self.actual_epochs_per_file = []
-        self.actual_epochs_per_file.append(num_graphs)
-
-        # Count valid graphs (x is not None)
-        valid_graphs_file = []
-        for fn in graph_filenames:
-            graph = torch.load(fn, weights_only=False)
-            if graph.x is not None:
-                valid_graphs_file.append(graph)
-
-        # Count stim ON/OFF
-        stim_on_count = 0
-        stim_off_count = 0
-        for graph in valid_graphs_file:
-            if graph.y is not None:
-                if graph.y.item() == 1:
-                    stim_on_count += 1
-                elif graph.y.item() == 0:
-                    stim_off_count += 1
-
-        if not hasattr(self, "actual_stim_on_per_file"):
-            self.actual_stim_on_per_file = []
-        if not hasattr(self, "actual_stim_off_per_file"):
-            self.actual_stim_off_per_file = []
-
-        self.actual_stim_on_per_file.append(stim_on_count)
-        self.actual_stim_off_per_file.append(stim_off_count)
-
-        print(f"File {self.filenames[idx_files]}: {num_graphs} graphs, {stim_on_count} stim ON, {stim_off_count} stim OFF")
-        print(f"Finished processing file {filename}. All graphs saved.")
-
     def create_raw_from_scouts(self, scouts_data):
         '''
         Creates an mne.io.RawArray object from a dictionary of scout signals.
@@ -620,6 +356,274 @@ class MEGGraphs(Dataset):
         raw_array = mne.io.RawArray(scout_signals_array, info)
 
         return raw_array
+    
+    def process(self):
+        '''
+        Performs all the processing steps needed to turn the raw (or preprocessed) data into graphs.
+
+        INPUT: N/A
+        OUTPUT: N/A
+        '''
+
+        # Initialize lists to store the actual number of graphs created per file
+        self.actual_epochs_per_file = []
+        self.actual_stim_on_per_file = []
+        self.actual_stim_off_per_file = []
+        created_graphs = []
+
+        # Parallelize graph creation by calling the process_file() function and an iterable of filenames
+        with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
+            results = list(executor.map(self.process_file, enumerate(self.filenames)))
+
+            # Collect results and store graphs in self.graphs
+            for result in results:
+                # Save all graphs created from one file
+                graphs_file = result
+
+                # Filter out empty graphs for processing
+                valid_graphs_file = [graph for graph in graphs_file if graph.x is not None]
+                # print('graph index', [(i, graph) for i, graph in enumerate(graphs_file)])
+
+                # Compute mean PSD for stimulation OFF epochs per file
+                mean_PSD_off = self.compute_mean_psd_off(graphs_file)
+
+                # Apply baseline correction to all graphs based on the mean PSD of stimulation OFF epochs
+                corrected_graphs = self.apply_baseline_correction(graphs_file, mean_PSD_off)
+                print('corrected graph index', [(i, graph) for i, graph in enumerate(corrected_graphs)])
+                print('len (corrected_graphs)', len(corrected_graphs))
+
+                # Store corrected graphs in self.graphs
+                self.graphs.extend(corrected_graphs)
+                print(f'Graphs for file: {len(graphs_file)}')
+                created_graphs.append(len(graphs_file))
+
+                # Count stimulation ON graphs created per file
+                stim_on_count = sum(1 for graph in valid_graphs_file if graph.y is not None and graph.y.item() == 1)
+                self.actual_stim_on_per_file.append(stim_on_count)
+                
+                # Count stimulation OFF graphs created per file
+                stim_off_count = sum(1 for graph in valid_graphs_file if graph.y is not None and graph.y.item() == 0)
+                self.actual_stim_off_per_file.append(stim_off_count)
+
+                # Count the total number of graphs created per file
+                self.actual_epochs_per_file.append(len(valid_graphs_file))
+
+                # Release memory for large data structures that are no longer needed
+                del graphs_file, mean_PSD_off, corrected_graphs, stim_on_count, stim_off_count, valid_graphs_file
+                gc.collect()
+
+        print('Lenght self.graphs', len(self.graphs))
+
+        # Create a copy of self.graphs to avoid modifying the original list
+        graphs_copy = self.graphs.copy()
+
+        # Save graphs to processed directory
+        for idx_files in range(len(self.filenames)):
+            print(f'Saving graphs for file {self.filenames[idx_files]}:')
+            for idx_epoch in range(created_graphs[idx_files]):
+                if graphs_copy:
+                    graph = graphs_copy.pop(0)
+                    print('graph index', idx_epoch)
+                    print('graph pop', graph)
+                    saved_graph = torch.save(graph, os.path.join(self.processed_dir, f'graph_{idx_files}_{idx_epoch}.pt'))
+                    print('graph after saving', saved_graph)
+                else:
+                    print(f"No more graphs to save for file {self.filenames[idx_files]} at epoch {idx_epoch}")
+                    break
+
+        # Release memory for large data structures that are no longer needed
+        del graphs_copy
+        gc.collect()
+
+    def process_file(self, idx_filename):
+        '''
+        Process a single file to create graphs.
+
+        INPUT:
+            - idx_filename:     Tuple containing index and filename
+
+        OUTPUT:
+            - graphs:           List of graphs created from the file
+        '''
+
+        # Extract index and filename from the tuple and retrieve patient ID
+        idx_files, filename = idx_filename
+        patient_id, stim_type = self.extract_patient_and_stim(filename)
+        print(f'Processing file {filename}')
+
+        # Update current filename
+        self.filename = filename
+        raw_path = self.raw_paths[idx_files]
+
+        # Check input type of the file
+        if self.input_type == 'fif':
+            # If input type is 'fif', load fif file data and keep relevant channels
+            self.raw = self.load_raw_data(raw_path)
+        
+        # If input type is 'scout', load the scout data from the dictionary
+        elif self.input_type == 'scout':
+            scouts_data_dict = self.scout_data_list[idx_files]
+            for scout_name, scout_signal in scouts_data_dict.items():
+                print(f"Scout: {scout_name}, Signal shape: {scout_signal.shape}")
+            self.raw = self.create_raw_from_scouts(scouts_data_dict)
+
+        # Retrieve the stimulation info for the current filename
+        stim_info = self.stim_info_dict.get(filename, None)
+        if stim_info is None:
+            return []
+
+        # Define events stating when stimulation did or did not take place
+        self.events, self.event_id = self.create_events(stim_info)
+
+        # Create epochs during which stimulation took place
+        self.epochs_stim = self.create_epochs(self.raw,
+                                            self.events,
+                                            self.event_id,
+                                            self.ramp_time,
+                                            label='stim'
+                                            )
+
+        # Create epochs during which no stimulation took place
+        self.epochs_non_stim = self.create_epochs(self.raw,
+                                                self.events,
+                                                self.event_id,
+                                                self.ramp_time,
+                                                label='non_stim'
+                                                )
+        
+        # Check the number of epochs created
+        print(f"Stim epochs: {len(self.epochs_stim)}, Non-stim epochs: {len(self.epochs_non_stim)}")
+
+        # Split epochs into lists of subepochs with the initialized duration and overlap
+        self.subepochs_stim, self.bad_subepochs_stim = self.split_epochs(self.epochs_stim,
+                                                                         self.duration,
+                                                                         self.overlap,
+                                                                         self.ramp_time,
+                                                                         label='stim',
+                                                                         threshold_fif=100,
+                                                                         threshold_scout=300)
+        self.subepochs_non_stim, self.bad_subepochs_non_stim = self.split_epochs(self.epochs_non_stim, 
+                                                                                 self.duration,
+                                                                                 self.overlap,
+                                                                                 self.ramp_time,
+                                                                                 label='non_stim',
+                                                                                 threshold_fif=100,
+                                                                                 threshold_scout=300)
+
+        # Check the number of subepochs created
+        print(f"Subepochs stim: {len(self.subepochs_stim)}, Subepochs non-stim: {len(self.subepochs_non_stim)}")
+        print(f'Bad subepochs stim ON: {self.bad_subepochs_stim}')
+        print(f'Bad subepochs stim OFF: {self.bad_subepochs_non_stim}')
+
+        # Concatenate lists of subepochs together into an EpochsArray object
+        self.subepochs = self.concatenate_subepochs(self.subepochs_stim, self.subepochs_non_stim)
+
+        # Combine list of bad subepochs and adjust indices for bad subepochs with stim OFF
+        offset = len(self.subepochs_stim)
+        adjusted_bad_subepochs_non_stim = [(total_idx + offset, subepoch) for total_idx, subepoch in self.bad_subepochs_non_stim]
+        combined_bad_subepochs = self.bad_subepochs_stim + adjusted_bad_subepochs_non_stim
+        print(f'Combined bad subepochs: {combined_bad_subepochs}')
+
+        # Initialize a list to store graphs created from this file
+        graphs_list = []
+
+        # Initialize a list to store indices of bad subepochs
+        bad_subepochs_indices = []
+
+        # Ensure the directory for bad subepochs exists
+        bad_subepochs_dir = os.path.join(self.processed_dir, 'bad_subepochs')
+        os.makedirs(bad_subepochs_dir, exist_ok=True)
+
+        # Create a graph for each subepoch
+        total_subepochs = len(self.subepochs)
+        for idx_epoch in tqdm(range(total_subepochs), desc=f"Processing graphs for file {filename}\n"):
+            print(f'\nProcessing graph_{idx_files}_{idx_epoch}')
+
+            # Check if the current subepoch is a bad subepoch
+            is_bad_subepoch = any(idx_epoch == total_idx for total_idx, _ in combined_bad_subepochs)
+            if is_bad_subepoch:
+                print('total idx', [total_idx for total_idx, _ in combined_bad_subepochs])
+                bad_subepoch = next((subepoch for total_idx, subepoch in combined_bad_subepochs if total_idx == idx_epoch), None)
+                if bad_subepoch is not None:
+                    # Convert data to appropriate unit, based on the data input type
+                    scaling_factor = 10**15 if self.input_type == 'fif' else 10**12
+
+                    # For each bad subepoch, make a plot and save it to the bad subepoch folder
+                    avg_epoch_data = np.mean(bad_subepoch.get_data()*scaling_factor, axis=1).squeeze()
+                    plt.figure(figsize=(10, 6))
+                    plt.plot(bad_subepoch.times, avg_epoch_data.T)
+                    plt.title(f'Bad Subepoch: graph_{idx_files}_{idx_epoch}')
+                    plt.xlabel('Time (s)')
+                    plt.ylabel('Signal (fT)')
+                    plt.savefig(os.path.join(self.processed_dir, 'bad_subepochs', f'bad_subepoch_{idx_files}_{idx_epoch}.png'))
+                    plt.close()
+
+                    # Create graph for bad subepoch with empty attributes
+                    bad_graph = Data(x=None, edge_index=None, edge_attr=None, y=None)
+                    graphs_list.append(bad_graph)
+                    bad_subepochs_indices.append(idx_epoch)
+                    print(f'Bad subepoch, graph_{idx_files}_{idx_epoch} is empty.')
+                else:
+                    print('Bad subepoch not found')
+            else:
+                print(f'Good subepoch, creating graph_{idx_files}_{idx_epoch}...')
+                # Load data of current epoch
+                epoch = self.subepochs.load_data()[idx_epoch]
+
+                # Define correct label 
+                if self.subepochs.events[idx_epoch, 2] == self.event_id['stim']:
+                    label = 'stim' 
+                elif self.subepochs.events[idx_epoch, 2] == self.event_id['non_stim']:
+                    label = 'non_stim'
+
+                # Resample for shorter runtime 
+                resample_freq = 256
+                epoch_resampled = epoch.resample(sfreq=resample_freq)
+
+                # Convert data to appropriate unit, based on the data input type
+                scaling_factor = 10**15 if self.input_type == 'fif' else 10**12
+                epoch_data = epoch_resampled.get_data() * scaling_factor
+
+                print('Epoch data shape:', epoch_data.shape)
+                # Get nodes with features
+                nodes = self._get_nodes(epoch_data, resample_freq, self.fmin, self.fmax, self.freq_res)
+
+                # Get edges with weights
+                edge_index, edge_weight = self._get_edges(epoch_data,
+                                                    resample_freq,
+                                                    self.conn_method,
+                                                    self.fmin,
+                                                    self.fmax,
+                                                    idx_filename,
+                                                    idx_epoch,
+                                                    self.conn_save_dir,
+                                                    self.freq_res)
+
+                # Define label
+                y = self._get_labels(label)
+
+                # Create graph
+                graph = Data(x=nodes, edge_index=edge_index, edge_attr=edge_weight, y=y)
+                graph.patient_file = idx_files
+                graph.patient_id = patient_id
+
+                print(f'graph {idx_files} {idx_epoch}: {graph}')
+                if graph.x is None:
+                    print(f'graph {idx_filename} {idx_epoch} is None')
+
+                # Store the graph to the graph list
+                graphs_list.append(graph)
+
+                # Release memory for large data structures that are no longer needed
+                del epoch, epoch_resampled, epoch_data, nodes, edge_index, edge_weight, y, graph
+                gc.collect()
+
+        # Save bad subepochs indices to a file
+        with open(os.path.join(bad_subepochs_dir, f'bad_subepochs_{idx_files}.txt'), 'w') as f:
+            for idx in bad_subepochs_indices:
+                f.write(f"{idx}\n")
+
+        return graphs_list
 
     def load_raw_data(self, file_path):
         '''
@@ -869,7 +873,7 @@ class MEGGraphs(Dataset):
         '''
     
         # High-pass filter the data to remove drifts
-        raw.load_data().filter(l_freq=0.1, h_freq=None)
+        raw.load_data().filter(l_freq=1, h_freq=None)
 
         # Define tmin and tmax of the epoch you want to create relative to the event sample
         if label == 'stim': 
@@ -917,16 +921,8 @@ class MEGGraphs(Dataset):
         bad_subepochs_list = []
         total_subepochs = 0
 
-        # Create directory for bad subepochs if it does not exist
-        bad_subepochs_dir = os.path.join(self.processed_dir, 'bad_subepochs')
-        os.makedirs(bad_subepochs_dir, exist_ok=True)
-
         # Determine the scaling factor based on the input type
-        scaling_factor = (
-            10**15 if self.input_type == 'fif'
-            else 10**12 if self.input_type == 'scout' and not self.threshold_scout == 40
-            else 100
-        )
+        scaling_factor = 10**15 if self.input_type == 'fif' else 10**12
 
         # Duration is not corresponding to the epoch length, so cropping is needed
         if duration != length_epoch:
@@ -995,7 +991,7 @@ class MEGGraphs(Dataset):
                     # Crop epoch with tmin and tmax
                     subepoch = epoch.crop(tmin=tmin, tmax=tmax)
 
-                    # Detect bad subepochs based on epoch median, MAD and maximum deviation of subepoch
+                    # Detect bad epochs based on epoch median, MAD and maximum deviation of subepoch
                     subepoch_median = np.median(subepoch.get_data() * scaling_factor)
                     max_deviation = np.max(np.abs(subepoch.get_data() * scaling_factor - epoch_median))
                     deviation_score = max_deviation / epoch_mad if epoch_mad != 0 else np.inf
@@ -1009,43 +1005,21 @@ class MEGGraphs(Dataset):
                         bad_subepochs_list.append((total_subepochs, subepoch))
 
                         avg_epoch_data = np.mean(subepoch.get_data()*scaling_factor, axis=1).squeeze()
-                        max_deviation_avg = np.max(np.abs(avg_epoch_data - epoch_median))
-                        times = np.linspace(0, duration, len(avg_epoch_data))
+                        max_devation_avg = np.max(np.abs(avg_epoch_data - epoch_median))
+                        times = np.linspace(0, 30, len(avg_epoch_data))
                         plt.figure(figsize=(10, 4))
                         plt.plot(times, avg_epoch_data.T)
                         plt.axhline(epoch_mad, color='#ff7f00', linestyle='--', linewidth = 2, label='MAD')
-                        plt.axhline(max_deviation_avg, color='g', linestyle='--', linewidth = 2, label='Maximum Deviation')
-                        plt.title(f'Bad Subepoch: deviation score {deviation_score}')
+                        plt.axhline(max_devation_avg, color='g', linestyle='--', linewidth = 2, label='Maximum Deviation')
+                        # plt.title(f'Bad Subepoch: deviation score {deviation_score}')
                         plt.xlabel('Time (s)')
                         plt.ylabel('Signal (fT)')
-                        plt.xlim(0, duration)
+                        plt.xlim(0, 30)
                         handles, labels = plt.gca().get_legend_handles_labels()
                         by_label = dict(zip(labels, handles))
                         plt.legend(by_label.values(), by_label.keys())
                         plt.tight_layout()
-                        plt.savefig(os.path.join(bad_subepochs_dir, f'bad_subepoch_{label}_{total_subepochs}.png'))
-                        plt.close()
-
-                        print(f'Bad subepoch detected in split_epochs: {label}_{total_subepochs}, deviation score: {deviation_score:.2f}')
-
-                    else:
-                        # If the subepoch is not bad, also plot the average data
-                        avg_epoch_data = np.mean(subepoch.get_data() * scaling_factor, axis=1).squeeze()
-                        max_deviation_avg = np.max(np.abs(avg_epoch_data - epoch_median))
-                        times = np.linspace(0, duration, len(avg_epoch_data))
-                        plt.figure(figsize=(10, 4))
-                        plt.plot(times, avg_epoch_data.T)
-                        plt.axhline(epoch_mad, color='#ff7f00', linestyle='--', linewidth = 2, label='MAD')
-                        plt.axhline(max_deviation_avg, color='g', linestyle='--', linewidth = 2, label='Maximum Deviation')
-                        plt.title(f'Good Subepoch: {label}_{total_subepochs} - Deviation Score: {deviation_score:.2f}')
-                        plt.xlabel('Time (s)')
-                        plt.ylabel('Signal (fT)')
-                        plt.xlim(0, duration)
-                        plt.tight_layout()
-                        plotted_graphs_dir = os.path.join(self.processed_dir, 'plotted_graphs')
-                        os.makedirs(plotted_graphs_dir, exist_ok=True)
-                        plt.savefig(os.path.join(plotted_graphs_dir, f'subepoch_{label}_{total_subepochs}.png'))
-                        plt.close()
+                        plt.show()
 
                     # Create unique event sample
                     subepoch.events[:, 0] = subepoch.events[:, 0] + unique_event_samples[i]
@@ -1146,7 +1120,7 @@ class MEGGraphs(Dataset):
         nodes = torch.tensor(np.squeeze(psd_sqrt), dtype=torch.float)
         return nodes
     
-    def _get_edges(self, epoch_data, sfreq, method, fmin, fmax, filename, idx_file, idx_epoch, conn_save_dir, freq_res=1): 
+    def _get_edges(self, epoch_data, sfreq, method, fmin, fmax, idx_file, idx_epoch, conn_save_dir, freq_res=1): 
         '''
         Calculates a connectivity metric between each of the nodes, based on the method you provide as an input.
         Based on the non-zero indices of the resulting connectivity matrix, the edges are defined.
@@ -1158,8 +1132,7 @@ class MEGGraphs(Dataset):
             - method        : String of connectivity metric 
             - fmin          : The defined minimum frequency for the connectivity calculation
             - fmax          : The defined maximum frequency for the connectivity calculation
-            - filename      : String of file path to save the connectivity matrix
-            - idx_file      : String of file index to save the connectivity matrix
+            - idx_file      : String of file path to save the connectivity matrix
             - idx_epoch     : String of epoch index to save the connectivity matrix
             - conn_save_dir : String of directory to save the connectivity matrix
             - freq_res      : The defined frequency resolution for the connectivity calculation
@@ -1171,13 +1144,14 @@ class MEGGraphs(Dataset):
         ''' 
 
         print('Epoch shape', epoch_data.shape)
-        patient_code, stim_type = self.extract_patient_and_stim(filename)
+        # Extract the filename from the idx_file tuple
+        file_index, filename = idx_file
 
         # Define a pattern to search for the edges file -- Uncomment to search for previously saved edges
         if self.input_type == 'scout':
-            pattern = os.path.join(conn_save_dir, f"edges_{patient_code}_{stim_type}_{idx_epoch}_{method}_scout.pt")
+            pattern = os.path.join(conn_save_dir, f"edges_(*, '{filename}')_{idx_epoch}_{method}_scout.pt")
         else:
-            pattern = os.path.join(conn_save_dir, f"edges_{patient_code}_{stim_type}_{idx_epoch}_{method}.pt")
+            pattern = os.path.join(conn_save_dir, f"edges_(*, '{filename}')_{idx_epoch}_{method}.pt")
         print('Pattern:', pattern)
 
         # Search for files matching the pattern
@@ -1188,11 +1162,8 @@ class MEGGraphs(Dataset):
         if matching_files:
             edge_filename = matching_files[0]
             print(f"Loading edges from {edge_filename}")
-            try:
-                edges = torch.load(edge_filename)
-                return edges['edge_index'], edges['edge_weight']
-            except Exception as e:
-                print(f"Warning: Could not load {edge_filename} due to error: {e}. Will recompute edges.")
+            edges = torch.load(edge_filename)
+            return edges['edge_index'], edges['edge_weight']
 
         # Perform connectivity calculation -- TIME-FREQUENCY CONNECTIVITY
         conn = mne_connectivity.spectral_connectivity_time(
@@ -1227,9 +1198,9 @@ class MEGGraphs(Dataset):
         # Save the edges to disk
         os.makedirs(conn_save_dir, exist_ok=True)
         if self.input_type == 'scout':
-            save_edge_filename = os.path.join(conn_save_dir, f"edges_{patient_code}_{stim_type}_{idx_epoch}_{method}_scout.pt")
+            save_edge_filename = os.path.join(conn_save_dir, f"edges_{idx_file}_{idx_epoch}_{method}_scout.pt")
         elif self.input_type == 'fif':
-            save_edge_filename = os.path.join(conn_save_dir, f"edges_{patient_code}_{stim_type}_{idx_epoch}_{method}.pt")
+            save_edge_filename = os.path.join(conn_save_dir, f"edges_{idx_file}_{idx_epoch}_{method}.pt")
         torch.save({'edge_index': edge_index, 'edge_weight': edge_weight}, save_edge_filename)
         print(f"Edges saved to {save_edge_filename}")
 
@@ -1254,45 +1225,7 @@ class MEGGraphs(Dataset):
         # Iterate over all valid graphs and collect PSD values for stimulation OFF subepochs
         for graph in valid_graphs:
             if graph.y.item() == 0:  # Label 0 indicates stimulation OFF
-                psd_values = graph.x.numpy()
-                # Check for NaN/Inf values
-                if not np.isnan(psd_values).any() and not np.isinf(psd_values).any():
-                    psd_off_list.append(psd_values)
-        
-        # Handle case where no valid stimulation OFF graphs are found
-        # If no OFF subepochs are found, we will try to use the mean of all valid graphs
-        if len(psd_off_list) == 0:
-            print("WARNING: No valid stimulation OFF graphs found for baseline correction!")
-            print("This can happen when most/all OFF subepochs are marked as bad.")
-            
-            # Try to get baseline from any valid graph (ON or OFF)
-            all_valid_psds = []
-            for graph in valid_graphs:
-                if graph.x is not None:
-                    psd_values = graph.x.numpy()
-                    if not np.isnan(psd_values).any() and not np.isinf(psd_values).any():
-                        all_valid_psds.append(psd_values)
-            
-            if len(all_valid_psds) > 0:
-                print(f"Using baseline from {len(all_valid_psds)} available graphs (mixed ON/OFF)")
-                mean_psd_off = np.mean(np.array(all_valid_psds), axis=0)
-
-            else:
-                print("No valid graphs available - using zero baseline")
-                # Determine PSD shape from the first graph with features
-                psd_shape = None
-                for graph in graphs_file:
-                    if graph.x is not None:
-                        psd_shape = graph.x.shape
-                        break
-                
-                if psd_shape is not None:
-                    mean_psd_off = np.zeros(psd_shape)
-                else:
-                    # Default fallback shape (adjust based on your typical PSD dimensions)
-                    mean_psd_off = np.zeros((43, 21))  # Replace with your actual PSD dimensions
-            
-            return mean_psd_off
+                psd_off_list.append(graph.x.numpy())
         
         # Convert list to numpy array for easier manipulation
         psd_off_array = np.array(psd_off_list)
@@ -1312,46 +1245,16 @@ class MEGGraphs(Dataset):
         OUTPUT:
             - corrected_graphs  : List of graphs with baseline correction applied
         '''
-
-        # Check if mean_psd_off is empty
-        if mean_psd_off is None or len(mean_psd_off) == 0:
-            print("WARNING: mean_psd_off is empty. Cannot apply baseline correction.")
-            return graphs_file
-        
-        # Check if mean_psd_off contains NaN or Inf values
-        if mean_psd_off.any() == 0:
-            print("WARNING: mean_psd_off is zero. Cannot apply baseline correction.")
-            use_different_baseline = True
-        else:
-            use_different_baseline = False
-
+    
         # Initialize a list to store corrected graphs
         corrected_graphs = []
 
         # Iterate over all graphs and apply baseline correction
         for graph in graphs_file:
             if graph.x is not None:
-                # Apply baseline correction: (PSD - mean_psd_off) / mean_psd_off
                 psd = graph.x.numpy()
-
-                if use_different_baseline:
-                    # If mean_psd_off is zero, use a different baseline
-                    print("Using zero baseline for correction due to NaN/Inf in mean_psd_off.")
-                    corrected_psd = psd - mean_psd_off
-                else:
-                    # Apply the baseline correction
-                    corrected_psd = (psd - mean_psd_off) / mean_psd_off
-
-                # Ensure corrected_psd is not NaN or Inf
-                if np.any(np.isnan(corrected_psd)) or np.any(np.isinf(corrected_psd)):
-                    print(f"Warning: NaN or Inf detected in corrected PSD for graph {graph.y.item()}. Skipping this graph.")
-                    graph.x = None
-                    continue
-
-                # Update the graph with the corrected node feature
+                corrected_psd = (psd - mean_psd_off) / mean_psd_off
                 graph.x = torch.tensor(corrected_psd, dtype=torch.float)
-
-            # Append the corrected graph to the list
             corrected_graphs.append(graph)
         
         return corrected_graphs
@@ -1460,16 +1363,12 @@ class MEGGraphs(Dataset):
         OUTPUT:
             - graph         : Data object of graph number 'idx'
         '''
-        
-        # Extract patient code and stimulation type from the file
-        patient_code, stim_type = self.extract_patient_and_stim(self.filenames[file_idx])
-        
-        for idx_epoch in range(self.epochs_per_file[file_idx]):
-          try:
-              graph = torch.load(os.path.join(self.processed_dir, f'graph_{patient_code}_{stim_type}_{idx_epoch}.pt'), weights_only=False)
-          except FileNotFoundError:
-              print(f"Graph file graph_{patient_code}_{stim_type}_{idx_epoch}.pt not found.")
-              return None
+
+        try:
+            graph = torch.load(os.path.join(self.processed_dir, f'graph_{file_idx}_{graph_idx}.pt'), weights_only=False)
+        except FileNotFoundError:
+            print(f"Graph file graph_{file_idx}_{graph_idx}.pt not found.")
+            return None
         return graph
 
     def __getitem__(self, idx):
@@ -1502,15 +1401,14 @@ class MEGGraphs(Dataset):
 
         # Copy all graph files to the "all_graphs" folder
         for idx_files in range(len(self.filenames)):
-            patient_code, stim_type = self.extract_patient_and_stim(self.filenames[idx_files])
             for idx_epoch in range(self.epochs_per_file[idx_files]):
-                graph_name = f'graph_{patient_code}_{stim_type}_{idx_epoch}.pt'
+                graph_name = f'graph_{idx_files}_{idx_epoch}.pt'
                 full_path = os.path.join(self.processed_dir, graph_name)
                 if os.path.exists(full_path):
                     shutil.copy(full_path, os.path.join(all_graphs_dir, graph_name))
                     print(f"Copied {graph_name} to all_graphs folder")
-                
-        # Create a directory for bad subepochs
+
+        # Create a directory for bad subepochs if it doesn't exist
         bad_subepochs_dir = os.path.join(self.processed_dir, 'bad_subepochs')
         os.makedirs(bad_subepochs_dir, exist_ok=True)
 
@@ -1519,8 +1417,7 @@ class MEGGraphs(Dataset):
 
         # For each file, retrieve the bad subepoch text file including the indices of the bad subepochs 
         for idx_files in range(len(self.filenames)):
-            patient_code, stim_type = self.extract_patient_and_stim(self.filenames[idx_files])
-            bad_subepochs_file = os.path.join(self.processed_dir, 'bad_subepochs', f'bad_subepochs_{patient_code}_{stim_type}.txt')
+            bad_subepochs_file = os.path.join(self.processed_dir, 'bad_subepochs', f'bad_subepochs_{idx_files}.txt')
 
             # Retrieve the indices of the bad subepochs for this file
             if os.path.exists(bad_subepochs_file):
@@ -1528,31 +1425,179 @@ class MEGGraphs(Dataset):
                     bad_indices = [int(line.strip()) for line in f]
                     bad_indices_per_file[idx_files] = bad_indices
             else:
-                bad_indices_per_file[idx_files] = []
-                print(f'The file "bad_subepochs_{patient_code}_{stim_type}.txt" does not exist in this directory: {bad_subepochs_dir}!')
+                print(f'The file "bad_subepochs_{idx_files}.txt" does not exist in this directory: {bad_subepochs_dir}!')
 
         # Move bad graphs for this file to the bad subepochs directory
         for idx_files in range(len(self.filenames)):
             for idx_epoch in range(self.epochs_per_file[idx_files]):
-                if idx_files in bad_indices_per_file and idx_epoch in bad_indices_per_file[idx_files]:
-                    graph_name = f'graph_{patient_code}_{stim_type}_{idx_epoch}.pt'
+                if idx_epoch in bad_indices_per_file[idx_files]:
+                    graph_name = f'graph_{idx_files}_{idx_epoch}.pt'
                     full_path = os.path.join(self.processed_dir, graph_name)
                     if os.path.exists(full_path):
                         shutil.move(full_path, os.path.join(bad_subepochs_dir, graph_name))
                         print(f"Moved bad graph: {graph_name}")
 
-        # # Reorder and rename the remaining graph files
-        # for idx_files in range(len(self.filenames)):
-        #     patient_code, stim_type = self.extract_patient_and_stim(self.filenames[idx_files])
-        #     # Specify new graph index to be 0
-        #     new_idx = 0
-        #     # Loop over all subepochs for one file and order the graph index, starting at 0
-        #     for idx_epoch in range(self.epochs_per_file[idx_files]):
-        #         graph_name = f'graph_{patient_code}_{stim_type}_{idx_epoch}.pt'
-        #         full_path = os.path.join(self.processed_dir, graph_name)
-        #         if os.path.exists(full_path):
-        #             new_graph_name = f'graph_{patient_code}_{stim_type}_{new_idx}.pt'
-        #             new_full_path = os.path.join(self.processed_dir, new_graph_name)
-        #             os.rename(full_path, new_full_path)
-        #             print(f"Renamed {graph_name} to {new_graph_name}")
-        #             new_idx += 1
+        # Reorder and rename the remaining graph files
+        for idx_files in range(len(self.filenames)):
+            # Specify new graph index to be 0
+            new_idx = 0
+            # Loop over all subepochs for one file and order the graph index, starting at 0
+            for idx_epoch in range(self.epochs_per_file[idx_files]):
+                graph_name = f'graph_{idx_files}_{idx_epoch}.pt'
+                full_path = os.path.join(self.processed_dir, graph_name)
+                if os.path.exists(full_path):
+                    new_graph_name = f'graph_{idx_files}_{new_idx}.pt'
+                    new_full_path = os.path.join(self.processed_dir, new_graph_name)
+                    os.rename(full_path, new_full_path)
+                    print(f"Renamed {graph_name} to {new_graph_name}")
+                    new_idx += 1
+
+def create_dataset():
+    '''
+    Calls the MEGGraphs class (see dataset.py) to create a dataset of graphs out of raw MEG data.
+    The inputs needed for the MEGGraphs class are defined here.
+
+    INPUT: N/A
+    OUTPUT:
+        - dataset       : Dataset of graphs
+        - duration      : Duration of subepochs in seconds
+        - overlap       : Overlap of subepochs in seconds
+        - num_graphs    : Number of graphs in the dataset
+        - fmax          : Maximum frequency of the computed PSD
+    '''
+
+    # Specify the type of input data ('fif' or 'scout')
+    input_type = 'scout'
+
+    if input_type == 'fif':
+        # Define filenames of MEG data exported as fif file
+        directory = '/scratch/cwitstok/Data/processed/scout_33/root_processed_full/raw'
+        filenames = []
+        for filename in os.listdir(directory):
+            if filename.endswith('.fif'):
+                filenames.append(filename)
+
+        # Define scouts data list as None
+        scouts_data_list = None
+
+    elif input_type == 'scout':
+        # Define filenames of MEG data exported as scouts file
+        directory = '/scratch/cwitstok/Data/raw/Scout_files/Scout_33'
+        fif_directory = '/scratch/cwitstok/Data/processed/scout_33/root_processed_full/raw'
+
+        scout_filenames = []
+        for scout_filename in os.listdir(directory):
+            if scout_filename.endswith('.h5'):
+                scout_filenames.append(scout_filename)
+        
+        # Sort scout filenames alphabetically
+        scout_filenames = sorted(scout_filenames)
+        print('scout filenames', scout_filenames)
+
+        # Retrieve list of dictionaries containing the scouts data for each file
+        scouts_data_list = load_scouts_data(scout_filenames, directory)
+
+        # Retrieve list of raw fif filenames corresponding to the scout data files
+        filenames = get_raw_file(scout_filenames, fif_directory)
+    else:
+        print(f'Input type {input_type} not recognized')
+
+    # Sort filenames alphabetically
+    filenames = sorted(filenames)
+    print('filenames', filenames)
+
+    # Define path to stimulation information Excel file
+    stim_excel_file = '/scratch/cwitstok/Data/MEG_PT_notes.xlsx'
+
+    # Retrieve stimulation info for each file and store it in a dictionary
+    stim_info_dict = {}
+    for filename in filenames:
+        stim_info = get_stimulation_info(stim_excel_file, filename)
+        if stim_info is not None:
+            print(f"Stimulation info found for {filename}:")
+        else:
+            print(f"No stimulation info found or enterred for {filename}")
+        stim_info_dict[filename] = stim_info
+
+    # Define the duration of the subepochs that are created out of the epochs and the amount of overlap between them (in seconds)
+    duration = 30
+    overlap = 25
+
+    # Define the ramp time (in seconds) for the subepochs to account for ramping of stimulation effects
+    ramp_time = 5
+
+    # Define minimum and maximum frequency for PSD calculation (maximum is resample_freq/2 due to Nyquist theorem; 128 Hz in this case)
+    fmin = 1
+    fmax = 100
+
+    # Define connectivity method for defining edges
+    conn_method = 'pli'
+
+    # Define the frequency resolution for the PSD and PLI calculation (in Hz, default = 1 Hz)
+    freq_res = 1
+
+    # Define root directory to the 'raw' and 'processed' folders that store the MEG data and the graphs, respectively
+    root_directory = '/scratch/cwitstok/Data/processed/scout_33/root_processed_full'
+
+    # Set parameters for MEGGraphs
+    duration = 30
+    overlap = 25
+    ramp_time = 5
+    conn_method = 'pli'
+    freq_res = 1
+    conn_save_dir = None
+    # conn_save_dir = f'/scratch/cwitstok/Data/Connectivity/{input_type}_{duration}sec_{overlap}overlap_freq_{fmin}_{fmax}Hz_freqres_{freq_res}Hz'
+    processed_analysis_dir = f'{root_directory}/processed/processed_{input_type}'
+    os.makedirs(processed_analysis_dir, exist_ok=True)
+
+    # Call the MEGGraphs class (see dataset.py)
+    if input_type == 'fif':
+        # Process the file
+        dataset = MEGGraphs(
+            input_type=input_type,
+            root=root_directory,
+            filenames=filenames,
+            stim_info_dict=stim_info_dict,
+            duration=duration,
+            overlap=overlap,
+            conn_method=conn_method,
+            fmin=fmin,
+            fmax=fmax,
+            ramp_time=ramp_time,
+            conn_save_dir=conn_save_dir,
+            freq_res=freq_res,
+            processed_dir=processed_analysis_dir
+        )
+    # If the input is scout time series data, add the scouts_data_list argument
+    elif input_type == 'scout':
+        dataset = MEGGraphs(
+            input_type=input_type,
+            root=root_directory,
+            filenames=filenames,
+            stim_info_dict=stim_info_dict,
+            duration=duration,
+            overlap=overlap,
+            conn_method=conn_method,
+            fmin=fmin,
+            fmax=fmax,
+            ramp_time=ramp_time,
+            conn_save_dir=conn_save_dir,
+            freq_res=freq_res,
+            scout_data_list=scouts_data_list,
+            processed_dir=processed_analysis_dir,
+        )
+
+    print('dataset', dataset)
+    print('total graphs per file', dataset.graphs_per_file())
+    print('total stim ON graphs per file', dataset.stim_graphs_per_file())
+    print('total stim OFF graphs per file', dataset.non_stim_graphs_per_file())
+
+    # Retrieve total number of graphs in the dataset
+    num_graphs = len(dataset)
+
+    return dataset, duration, overlap, num_graphs, fmax, scouts_data_list
+
+if __name__ == "__main__":
+
+    dataset, duration, overlap, num_graphs, fmax, scouts_data_list = create_dataset()
+    print("Dataset created successfully.")

@@ -1,0 +1,46 @@
+name: GNNenv
+channels:
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - numpy
+  - pandas
+  - scipy
+  - matplotlib
+  - seaborn
+  - scikit-learn
+  - networkx
+  - h5py
+  - openpyxl
+  - pyqt
+  - joblib
+  - tqdm
+  - pillow
+  - mkl
+  - mkl-service
+  - numexpr
+  - setuptools
+  - wheel
+  - pip:
+      - mne==1.9.0
+      - mne-connectivity==0.7.0
+      - torch==2.6.0
+      - torch-geometric==2.6.1
+      - ray==2.42.1
+      - xarray==2025.1.2
+      - netcdf4==1.7.2
+      - pyarrow==18.1.0
+      - flask
+      - mlflow
+      - sqlalchemy
+      - protobuf
+      - markdown
+      - jinja2
+      - requests
+      - graphene
+      - graphql-core
+      - jsonschema
+      - pydantic
+      - pytz
+      - pyyaml

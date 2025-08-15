@@ -3,7 +3,56 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import datetime
 import torch
+from torch_geometric.data import Data
+import networkx as nx
 
+def mst_filtering(graph):
+    """
+    Applies a Maximum Spanning Tree (MST) algorithm to a PyTorch Geometric graph.
+    Returns a filtered graph with only the MST edges (maximizing total edge weight).
+
+    INPUTS:
+        - graph:    PyTorch Geometric Data object containing the graph structure.
+    OUTPUT:
+        - graph:    The same Graph object, but with only MST edges retained
+    """
+
+    # Extract edge indices and edge attributes from the graph
+    edge_index = graph.edge_index.cpu().numpy()
+    edge_attr = graph.edge_attr.cpu().numpy()
+
+    # Build a NetworkX graph
+    G = nx.Graph()
+    for i in range(edge_index.shape[1]):
+        src, dst = edge_index[:, i]
+        weight = edge_attr[i]
+        G.add_edge(src, dst, weight=float(weight))
+
+    # Compute Maximum Spanning Tree
+    mst = nx.maximum_spanning_tree(G, weight='weight')
+
+    # Extract MST edges and weights
+    mst_edges = list(mst.edges(data=True))
+    new_edge_index = []
+    new_edge_attr = []
+    for src, dst, attr in mst_edges:
+        new_edge_index.append([src, dst])
+        new_edge_attr.append(attr['weight'])
+
+    # Convert to tensors
+    if len(new_edge_index) > 0:
+        new_edge_index = torch.tensor(new_edge_index, dtype=torch.long).t().contiguous()
+        new_edge_attr = torch.tensor(new_edge_attr, dtype=torch.float32)
+    else:
+        # If no edges, create empty tensors with correct shape
+        new_edge_index = torch.empty((2, 0), dtype=torch.long)
+        new_edge_attr = torch.empty((0,), dtype=torch.float32)
+
+    # Update the graph attributes
+    graph.edge_index = new_edge_index
+    graph.edge_attr = new_edge_attr
+
+    return graph
 
 def edge_filtering(graph, top_k, threshold):
     '''
@@ -25,7 +74,6 @@ def edge_filtering(graph, top_k, threshold):
         mask = edge_weight > threshold
         edge_index = edge_index[:, mask]
         edge_weight = edge_weight[mask]
-        print('Num edges after threshold filtring:', edge_index.shape[1])
 
     # Apply top-K filtering if specified
     if top_k is not None:
@@ -34,20 +82,22 @@ def edge_filtering(graph, top_k, threshold):
             top_k_indices = torch.topk(edge_weight, top_k).indices
             edge_index = edge_index[:, top_k_indices]
             edge_weight = edge_weight[top_k_indices]
-            print('Num edges after top-K filtering:', edge_index.shape[1])
 
     # Update graph with filtered edges
     graph.edge_index = edge_index
     graph.edge_attr = edge_weight
-    print('Num edges after edge filtering (total):', graph.edge_index.shape[1])
 
     return graph
 
-def plot_train_results(results, best_result):
+def plot_train_results(results, best_result, output_dir, model_name):
     '''
     Plots the training results by plotting the losses and accuracies of both the train and validation set.
 
-    INPUT: N/A
+    INPUTS:
+        - results       : List of Result objects containing training results for different hyperparameters.
+        - best_result   : Result object containing the best training result.
+        - output_dir    : Directory where the plots will be saved.
+        - model_name    : Name of the model used in the experiment.
     OUTPUT: N/A
     '''
 
@@ -62,7 +112,7 @@ def plot_train_results(results, best_result):
     ax.set_title("Train Accuracy across training iterations for all LRs")
     ax.set_xlabel("Training iteration")
     ax.set_ylabel("Training Accuracy")
-    plt.show()
+    plt.savefig(os.path.join(output_dir, f"{model_name}_train_accuracy.png"))
 
     # Plot losses and accuracies for best configuration
     plt.figure(figsize=(12, 5))
@@ -90,7 +140,7 @@ def plot_train_results(results, best_result):
     plt.xlabel('Training iteration')
     plt.title('Training and Validation Accuracy')
     plt.grid(True)
-    plt.show()
+    plt.savefig(os.path.join(output_dir, f"{model_name}_train_val_results.png"))
 
 def save_results(results_df, best_params, best_result, output_directory, duration, overlap, num_graphs):
     '''
